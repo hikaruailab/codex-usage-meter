@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>AI Usage Meter</title>
+  <link rel="stylesheet" href="./styles.css?v=20260716-6">
+  </head>
+  <body>
+    <svg class="color-filter-definitions" aria-hidden="true" focusable="false">
+      <filter id="swap-red-blue" color-interpolation-filters="sRGB">
+        <feColorMatrix
+          type="matrix"
+          values="0 0 1 0 0
+                  0 1 0 0 0
+                  1 0 0 0 0
+                  0 0 0 1 0"
+        />
+      </filter>
+    </svg>
+    <main class="usage-widget" aria-label="AI残り使用量">
+      <div class="meter-area">
+        <button class="energy-frame" type="button" aria-label="ゲージデザインを選択" aria-haspopup="true" aria-expanded="false">
+          <span class="energy-meter" role="meter" aria-label="残り使用量" aria-valuemin="0" aria-valuemax="28" aria-valuenow="28">
+            <span id="energyCells" class="energy-cells"></span>
+          </span>
+        </button>
+        <div id="designPicker" class="design-picker" aria-label="ゲージデザイン" hidden></div>
+      </div>
+      <span id="demoLabel" class="demo-label" aria-label="DEMO" hidden></span>
+      <div class="energy-can-area">
+        <button class="energy-can-button" type="button" aria-label="ゲージを回復。Shiftを押しながらクリックで週枠をリセット" aria-describedby="resetExpiryTooltip">
+          <span class="energy-can-stack">
+            <img class="energy-can" src="./E_can.png" alt="">
+            <img class="energy-can energy-can-alert" src="./E_can.png" alt="">
+          </span>
+        </button>
+        <div id="resetExpiryTooltip" class="reset-expiry-tooltip" role="tooltip">
+          <div id="resetExpiryList" class="reset-expiry-list"></div>
+          <div class="reset-expiry-hint" aria-label="Shiftを押しながらクリックで使用">
+            <kbd>SHIFT</kbd>
+            <span aria-hidden="true">+</span>
+            <span aria-hidden="true">CLICK</span>
+            <span class="reset-expiry-hint-action" aria-hidden="true">使用</span>
+          </div>
+        </div>
+      </div>
+      <span id="resetCounter" class="reset-counter" aria-label="残り使用量リセット回数 0回"></span>
+    </main>
+
+    <section id="debugPanel" class="debug-panel" aria-label="回復音デバッグ設定" hidden>
+      <header class="debug-header">
+        <h2>DEBUG</h2>
+        <button class="debug-close" type="button" data-debug-action="close" aria-label="デバッグ設定を閉じる">×</button>
+      </header>
+
+      <div class="debug-monitor" aria-live="polite">
+        <span id="debugMemoryStatus">目盛り 0/28</span>
+        <span id="debugSoundStatus">発音 0回</span>
+      </div>
+
+      <details class="debug-section" data-debug-section="test" open>
+        <summary>テスト</summary>
+        <div class="debug-section-content">
+          <div class="debug-actions" aria-label="テスト操作">
+            <button type="button" data-debug-action="zero-recovery">0% → 回復</button>
+            <button type="button" data-debug-action="preview">1音試聴</button>
+            <button type="button" data-debug-action="continuous-start">連続再生</button>
+            <button type="button" data-debug-action="continuous-stop" disabled>停止</button>
+            <button type="button" data-debug-action="match-reference">原音FFT合わせ</button>
+            <button type="button" data-debug-action="sync">実値へ戻す</button>
+            <button type="button" data-debug-action="reset">初期値</button>
+            <button type="button" data-debug-action="set-defaults">デフォルト変更</button>
+          </div>
+        </div>
+      </details>
+
+      <details class="debug-section" data-debug-section="timing" open>
+        <summary>タイミング</summary>
+        <div class="debug-section-content">
+        <label class="debug-control">
+          <span>音価</span>
+          <input type="range" min="30" max="800" step="5" data-debug-setting="noteDurationMs">
+          <output data-debug-output="noteDurationMs"></output>
+        </label>
+        <label class="debug-control">
+          <span>回復速度</span>
+          <input type="number" min="40" max="1000" step="0.5" data-debug-setting="recoveryIntervalMs">
+          <output>ms</output>
+        </label>
+        <label class="debug-control">
+          <span>音の間隔</span>
+          <input type="number" min="40" max="1000" step="0.5" data-debug-setting="soundIntervalMs">
+          <output>ms</output>
+        </label>
+        </div>
+      </details>
+
+      <details class="debug-section" data-debug-section="adsr">
+        <summary>ADSR</summary>
+        <div class="debug-section-content">
+        <label class="debug-control">
+          <span>Attack</span>
+          <input type="range" min="0" max="300" step="1" data-debug-setting="attackMs">
+          <output data-debug-output="attackMs"></output>
+        </label>
+        <label class="debug-control">
+          <span>Decay</span>
+          <input type="range" min="0" max="500" step="1" data-debug-setting="decayMs">
+          <output data-debug-output="decayMs"></output>
+        </label>
+        <label class="debug-control">
+          <span>Sustain</span>
+          <input type="range" min="0" max="1" step="0.01" data-debug-setting="sustainLevel">
+          <output data-debug-output="sustainLevel"></output>
+        </label>
+        <label class="debug-control">
+          <span>Release</span>
+          <input type="range" min="0" max="800" step="1" data-debug-setting="releaseMs">
+          <output data-debug-output="releaseMs"></output>
+        </label>
+        <label class="debug-control">
+          <span>切断待ち</span>
+          <input type="range" min="0" max="200" step="1" data-debug-setting="disconnectDelayMs">
+          <output data-debug-output="disconnectDelayMs"></output>
+        </label>
+        </div>
+      </details>
+
+      <details class="debug-section" data-debug-section="eq">
+        <summary>EQ</summary>
+        <div class="debug-section-content">
+        <svg id="eqGraph" class="eq-graph" viewBox="0 0 340 150" role="img" aria-label="フィルターとEQの周波数特性"></svg>
+        <div class="filter-band">
+          <div class="filter-band-header">
+            <span>HIGH PASS</span>
+            <div class="filter-toggle" role="group" aria-label="ハイパスフィルター">
+              <button type="button" data-filter-enabled-setting="highpassEnabled" data-filter-enabled-value="true">ON</button>
+              <button type="button" data-filter-enabled-setting="highpassEnabled" data-filter-enabled-value="false">OFF</button>
+            </div>
+          </div>
+          <label class="debug-control debug-frequency" data-filter-dependent="highpassEnabled">
+            <span>カットオフ</span>
+            <input type="number" min="20" max="5000" step="10" data-debug-setting="highpassFrequency" aria-label="ハイパス カットオフ周波数">
+            <output>Hz</output>
+          </label>
+          <label class="debug-control debug-frequency" data-filter-dependent="highpassEnabled">
+            <span>Q</span>
+            <input type="number" min="0.2" max="8" step="0.1" data-debug-setting="highpassQ" aria-label="ハイパス Q">
+            <output>Q</output>
+          </label>
+        </div>
+
+        <div class="filter-band">
+          <div class="filter-band-header">
+            <span>LOW PASS</span>
+            <div class="filter-toggle" role="group" aria-label="ローパスフィルター">
+              <button type="button" data-filter-enabled-setting="lowpassEnabled" data-filter-enabled-value="true">ON</button>
+              <button type="button" data-filter-enabled-setting="lowpassEnabled" data-filter-enabled-value="false">OFF</button>
+            </div>
+          </div>
+          <label class="debug-control debug-frequency" data-filter-dependent="lowpassEnabled">
+            <span>カットオフ</span>
+            <input type="number" min="1000" max="20000" step="100" data-debug-setting="lowpassFrequency" aria-label="ローパス カットオフ周波数">
+            <output>Hz</output>
+          </label>
+          <label class="debug-control debug-frequency" data-filter-dependent="lowpassEnabled">
+            <span>Q</span>
+            <input type="number" min="0.2" max="8" step="0.1" data-debug-setting="lowpassQ" aria-label="ローパス Q">
+            <output>Q</output>
+          </label>
+        </div>
+
+        <div class="eq-band">
+          <div class="eq-band-header">
+            <span>LOW</span>
+            <div class="eq-type-control" aria-label="Low EQタイプ">
+              <button type="button" data-eq-type-setting="eqLowType" data-eq-type-value="peaking" aria-label="Low PEAK">PEAK</button>
+              <button type="button" data-eq-type-setting="eqLowType" data-eq-type-value="lowshelf" aria-label="Low LOW SHELF">LOW SHELF</button>
+              <button type="button" data-eq-type-setting="eqLowType" data-eq-type-value="highshelf" aria-label="Low HIGH SHELF">HIGH SHELF</button>
+            </div>
+          </div>
+          <label class="debug-control debug-frequency">
+            <span>周波数</span>
+            <input type="number" min="400" max="2000" step="10" data-debug-setting="eqLowFrequency" aria-label="Low 周波数">
+            <output>Hz</output>
+          </label>
+          <label class="debug-control">
+            <span>ゲイン</span>
+            <input type="range" min="-36" max="36" step="0.5" data-debug-setting="eqLowGain" aria-label="Low ゲイン">
+            <output data-debug-output="eqLowGain"></output>
+          </label>
+          <label class="debug-control debug-frequency">
+            <span>Q (PEAK)</span>
+            <input type="number" min="0.2" max="8" step="0.1" data-debug-setting="eqLowQ" aria-label="Low Q">
+            <output>Q</output>
+          </label>
+        </div>
+
+        <div class="eq-band">
+          <div class="eq-band-header">
+            <span>MID</span>
+            <div class="eq-type-control" aria-label="Mid EQタイプ">
+              <button type="button" data-eq-type-setting="eqMidType" data-eq-type-value="peaking" aria-label="Mid PEAK">PEAK</button>
+              <button type="button" data-eq-type-setting="eqMidType" data-eq-type-value="lowshelf" aria-label="Mid LOW SHELF">LOW SHELF</button>
+              <button type="button" data-eq-type-setting="eqMidType" data-eq-type-value="highshelf" aria-label="Mid HIGH SHELF">HIGH SHELF</button>
+            </div>
+          </div>
+          <label class="debug-control debug-frequency">
+            <span>周波数</span>
+            <input type="number" min="500" max="8000" step="10" data-debug-setting="eqMidFrequency" aria-label="Mid 周波数">
+            <output>Hz</output>
+          </label>
+          <label class="debug-control">
+            <span>ゲイン</span>
+            <input type="range" min="-36" max="36" step="0.5" data-debug-setting="eqMidGain" aria-label="Mid ゲイン">
+            <output data-debug-output="eqMidGain"></output>
+          </label>
+          <label class="debug-control debug-frequency">
+            <span>Q (PEAK)</span>
+            <input type="number" min="0.2" max="8" step="0.1" data-debug-setting="eqMidQ" aria-label="Mid Q">
+            <output>Q</output>
+          </label>
+        </div>
+
+        <div class="eq-band">
+          <div class="eq-band-header">
+            <span>HIGH</span>
+            <div class="eq-type-control" aria-label="High EQタイプ">
+              <button type="button" data-eq-type-setting="eqHighType" data-eq-type-value="peaking" aria-label="High PEAK">PEAK</button>
+              <button type="button" data-eq-type-setting="eqHighType" data-eq-type-value="lowshelf" aria-label="High LOW SHELF">LOW SHELF</button>
+              <button type="button" data-eq-type-setting="eqHighType" data-eq-type-value="highshelf" aria-label="High HIGH SHELF">HIGH SHELF</button>
+            </div>
+          </div>
+          <label class="debug-control debug-frequency">
+            <span>周波数</span>
+            <input type="number" min="2000" max="16000" step="10" data-debug-setting="eqHighFrequency" aria-label="High 周波数">
+            <output>Hz</output>
+          </label>
+          <label class="debug-control">
+            <span>ゲイン</span>
+            <input type="range" min="-36" max="36" step="0.5" data-debug-setting="eqHighGain" aria-label="High ゲイン">
+            <output data-debug-output="eqHighGain"></output>
+          </label>
+          <label class="debug-control debug-frequency">
+            <span>Q (PEAK)</span>
+            <input type="number" min="0.2" max="8" step="0.1" data-debug-setting="eqHighQ" aria-label="High Q">
+            <output>Q</output>
+          </label>
+        </div>
+        </div>
+      </details>
+
+      <details class="debug-section" data-debug-section="voices">
+        <summary>2音</summary>
+        <div class="debug-section-content">
+        <div class="waveform-setting">
+          <span>波形</span>
+          <div class="filter-toggle" role="group" aria-label="オシレーター波形">
+            <button type="button" data-waveform-value="sawtooth">SAW</button>
+            <button type="button" data-waveform-value="pulse">PULSE</button>
+          </div>
+        </div>
+        <label class="debug-control" data-waveform-dependent>
+          <span>Duty</span>
+          <input type="range" min="0.05" max="0.5" step="0.01" data-debug-setting="pulseDutyCycle">
+          <output data-debug-output="pulseDutyCycle"></output>
+        </label>
+        <label class="debug-control">
+          <span>音程段階</span>
+          <input type="number" min="0" max="100" step="0.5" data-debug-setting="pitchStepIntervalMs">
+          <output data-debug-output="pitchStepIntervalMs"></output>
+        </label>
+        <label class="debug-control debug-frequency">
+          <span>音1（開始）</span>
+          <input type="number" min="50" max="4000" step="0.001" data-debug-setting="frequency1">
+          <output>Hz</output>
+        </label>
+        <label class="debug-control debug-frequency">
+          <span>音1段差</span>
+          <input type="number" min="-500" max="500" step="0.1" data-debug-setting="frequencyStep1">
+          <output>Hz</output>
+        </label>
+        <label class="debug-control">
+          <span>音量1</span>
+          <input type="range" min="0" max="0.2" step="0.001" data-debug-setting="volume1">
+          <output data-debug-output="volume1"></output>
+        </label>
+        <label class="debug-control debug-frequency">
+          <span>音2（開始）</span>
+          <input type="number" min="50" max="4000" step="0.001" data-debug-setting="frequency2">
+          <output>Hz</output>
+        </label>
+        <label class="debug-control debug-frequency">
+          <span>音2段差</span>
+          <input type="number" min="-500" max="500" step="0.1" data-debug-setting="frequencyStep2">
+          <output>Hz</output>
+        </label>
+        <label class="debug-control">
+          <span>音量2</span>
+          <input type="range" min="0" max="0.2" step="0.001" data-debug-setting="volume2">
+          <output data-debug-output="volume2"></output>
+        </label>
+        </div>
+      </details>
+    </section>
+
+  <script src="./app.js?v=20260807-1"></script>
+  </body>
+</html>
