@@ -74,8 +74,14 @@ body[data-design="purple"] {
 html,
 body {
   width: 234px;
+  min-width: 234px;
+  max-width: 234px;
   height: 450px;
   min-height: 450px;
+  max-height: 450px;
+  resize: none;
+  overscroll-behavior: none;
+  overflow: hidden;
 }
 
 html {
@@ -85,8 +91,11 @@ html {
 
 html.debug-open {
   width: 100%;
+  min-width: 0;
+  max-width: none;
   height: 100%;
   min-height: 100%;
+  max-height: none;
   background: #080808;
   overflow: auto;
 }
@@ -94,13 +103,15 @@ html.debug-open {
 body {
   margin: 0;
   background: #0021a7;
-  overflow: visible;
 }
 
 body.debug-open {
   width: 100vw;
+  min-width: 0;
+  max-width: none;
   height: auto;
   min-height: 100vh;
+  max-height: none;
   background: #080808;
   overflow: auto;
 }
@@ -117,8 +128,12 @@ body.debug-open {
   position: relative;
   isolation: isolate;
   width: 234px;
+  min-width: 234px;
+  max-width: 234px;
   height: 450px;
+  max-height: 450px;
   min-height: 100vh;
+  resize: none;
   display: inline-grid;
   grid-template-columns: 54px 66px 54px;
   grid-template-rows: auto auto;
@@ -136,7 +151,10 @@ body:not(.debug-open) .usage-widget {
 
 body.debug-open .usage-widget {
   width: 100%;
+  min-width: 0;
+  max-width: none;
   height: auto;
+  max-height: none;
   min-height: 100vh;
 }
 
