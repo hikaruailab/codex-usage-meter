@@ -1,4 +1,4 @@
-# AI Usage Meter
+# Codex Usage Meter
 
 ## 起動
 

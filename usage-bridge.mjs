@@ -369,7 +369,7 @@ const server = createServer(async (request, response) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`AI Usage Meter: http://${HOST}:${PORT}`);
+  console.log(`Codex Usage Meter: http://${HOST}:${PORT}`);
 });
 
 function shutdown() {
