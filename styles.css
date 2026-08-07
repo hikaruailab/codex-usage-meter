@@ -73,9 +73,9 @@ body[data-design="purple"] {
 
 html,
 body {
-  width: 234px;
-  min-width: 234px;
-  max-width: 234px;
+  width: 360px;
+  min-width: 360px;
+  max-width: 360px;
   height: 450px;
   min-height: 450px;
   max-height: 450px;

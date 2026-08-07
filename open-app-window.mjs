@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 const url = process.argv[2];
-const windowSize = process.env.USAGE_METER_WINDOW_SIZE ?? "234,482";
+const windowSize = process.env.USAGE_METER_WINDOW_SIZE ?? "360,482";
 
 if (!url) {
   console.error("起動するURLが指定されていません。");
