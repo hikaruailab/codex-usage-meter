@@ -293,16 +293,6 @@ body.debug-open .usage-widget {
   height: 48px;
 }
 
-.energy-can-area::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 48px;
-  z-index: 3;
-  width: 12px;
-  height: 48px;
-}
-
 .energy-can-area:hover,
 .energy-can-area:focus-within {
   z-index: 5;
@@ -371,10 +361,7 @@ body.debug-open .usage-widget {
   opacity: 0;
   visibility: hidden;
   transform: translateX(-3px);
-  transition:
-    opacity 80ms linear,
-    transform 80ms linear,
-    visibility 0s linear 180ms;
+  transition: opacity 80ms linear, transform 80ms linear, visibility 80ms linear;
   pointer-events: none;
   white-space: nowrap;
 }
@@ -384,8 +371,6 @@ body.debug-open .usage-widget {
   opacity: 1;
   visibility: visible;
   transform: translateX(0);
-  transition-delay: 0s;
-  pointer-events: auto;
 }
 
 .reset-expiry-list {
