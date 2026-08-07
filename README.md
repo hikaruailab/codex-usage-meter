@@ -2,8 +2,23 @@
 
 ## 起動
 
-1. このフォルダで`node usage-bridge.mjs`を実行します。
-2. ブラウザで`http://127.0.0.1:4317/`を開きます。
+### macOS
+
+`start.command`をダブルクリックします。
+
+### Windows
+
+`start.bat`をダブルクリックします。
+
+### ターミナルから起動
+
+このフォルダで次を実行します。
+
+```bash
+node usage-bridge.mjs
+```
+
+その後、ブラウザで`http://127.0.0.1:4317/`を開きます。
 
 Codexの現在使用量を取得し、残り使用量を自動表示します。`usage-bridge.mjs`を起動せずに使う場合は、`index.html?demo=1`を開いてください。
 
