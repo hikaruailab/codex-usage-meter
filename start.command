@@ -25,7 +25,7 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-if [ ! -f "$SCRIPT_DIR/usage-bridge.mjs" ]; then
+if [ ! -f "$SCRIPT_DIR/usage-bridge.mjs" ] || [ ! -f "$SCRIPT_DIR/open-app-window.mjs" ]; then
   if ! command -v curl >/dev/null 2>&1 || ! command -v ditto >/dev/null 2>&1; then
     echo "ダウンロードに必要なcurlまたはdittoが見つかりません。"
     read -r -p "Enterキーで終了します。"
@@ -66,7 +66,7 @@ SERVER_PID=$!
 
 for _ in $(seq 1 30); do
   if curl --silent --fail "$URL" >/dev/null 2>&1; then
-    open "$URL" >/dev/null 2>&1 || true
+    node open-app-window.mjs "$URL" >/dev/null 2>&1 || open "$URL" >/dev/null 2>&1 || true
     break
   fi
 

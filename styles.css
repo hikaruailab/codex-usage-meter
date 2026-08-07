@@ -73,12 +73,33 @@ body[data-design="purple"] {
 
 html,
 body {
+  width: 234px;
+  height: 450px;
+  min-height: 450px;
+}
+
+html {
+  overflow: hidden;
+}
+
+html.debug-open {
+  width: 100%;
+  height: 100%;
   min-height: 100%;
+  overflow: auto;
 }
 
 body {
   margin: 0;
   background: transparent;
+  overflow: visible;
+}
+
+body.debug-open {
+  width: 100vw;
+  height: auto;
+  min-height: 100vh;
+  overflow: auto;
 }
 
 .color-filter-definitions {
@@ -92,6 +113,8 @@ body {
 .usage-widget {
   position: relative;
   isolation: isolate;
+  width: 234px;
+  height: 450px;
   min-height: 100vh;
   display: inline-grid;
   grid-template-columns: 54px 66px 54px;
@@ -102,6 +125,16 @@ body {
   row-gap: 9px;
   padding: 39px 21px 21px;
   image-rendering: pixelated;
+}
+
+body:not(.debug-open) .usage-widget {
+  min-height: 450px;
+}
+
+body.debug-open .usage-widget {
+  width: 100%;
+  height: auto;
+  min-height: 100vh;
 }
 
 .usage-widget::before {

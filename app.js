@@ -1497,6 +1497,7 @@ function toggleDebugPanel(forceOpen) {
   const isOpen = forceOpen ?? elements.debugPanel.hidden;
   elements.debugPanel.hidden = !isOpen;
   document.body.classList.toggle("debug-open", isOpen);
+  document.documentElement.classList.toggle("debug-open", isOpen);
   if (isOpen) {
     toggleDesignPicker(false);
     syncDebugControls();

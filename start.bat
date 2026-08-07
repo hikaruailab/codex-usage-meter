@@ -12,7 +12,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-if exist "%SCRIPT_DIR%usage-bridge.mjs" goto ready
+if exist "%SCRIPT_DIR%usage-bridge.mjs" if exist "%SCRIPT_DIR%open-app-window.mjs" goto ready
 
 where powershell.exe >nul 2>&1
 if errorlevel 1 (
@@ -34,12 +34,13 @@ if errorlevel 1 goto download_error
 
 set "SCRIPT_DIR=%TEMP_ROOT%\codex-usage-meter-main\"
 if not exist "%SCRIPT_DIR%usage-bridge.mjs" goto download_error
+if not exist "%SCRIPT_DIR%open-app-window.mjs" goto download_error
 
 :ready
 cd /d "%SCRIPT_DIR%"
 if not defined USAGE_METER_PORT set "USAGE_METER_PORT=4317"
 
-start "" /b powershell.exe -NoProfile -Command "Start-Sleep -Seconds 1; Start-Process 'http://127.0.0.1:%USAGE_METER_PORT%/'"
+start "" /b node open-app-window.mjs "http://127.0.0.1:%USAGE_METER_PORT%/"
 node usage-bridge.mjs
 set "EXIT_CODE=%ERRORLEVEL%"
 
