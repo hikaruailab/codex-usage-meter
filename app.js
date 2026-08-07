@@ -2,10 +2,12 @@ const DEMO_MODE = document.body?.dataset.live === "false"
   || new URLSearchParams(location.search).get("demo") === "1";
 const LIVE_MODE = !DEMO_MODE;
 const STORAGE_KEY = LIVE_MODE ? "aiUsageMeter" : "aiUsageMeter.demo";
-const DEBUG_STORAGE_KEY = LIVE_MODE ? "aiUsageMeterDebug" : "aiUsageMeter.demoDebug";
+const DEBUG_STORAGE_KEY = LIVE_MODE
+  ? "aiUsageMeterDebug.standard-v2"
+  : "aiUsageMeter.demoDebug.standard-v2";
 const DEBUG_DEFAULTS_STORAGE_KEY = LIVE_MODE
-  ? "aiUsageMeterDebugDefaults"
-  : "aiUsageMeter.demoDebugDefaults";
+  ? "aiUsageMeterDebugDefaults.standard-v2"
+  : "aiUsageMeter.demoDebugDefaults.standard-v2";
 const DEBUG_SECTIONS_STORAGE_KEY = LIVE_MODE
   ? "aiUsageMeterDebugSections"
   : "aiUsageMeter.demoDebugSections";
@@ -42,39 +44,39 @@ const EQ_HANDLE_SETTINGS = Object.freeze({
 const EQ_COMPONENT_NAMES = ["highpass", "lowpass", ...Object.keys(EQ_HANDLE_SETTINGS)];
 const DEFAULT_DEBUG_SETTINGS = Object.freeze({
   noteDurationMs: 50,
-  recoveryIntervalMs: 140,
-  soundIntervalMs: 55,
-  attackMs: 10,
-  decayMs: 500,
+  recoveryIntervalMs: 66.5,
+  soundIntervalMs: 66.5,
+  attackMs: 0,
+  decayMs: 0,
   sustainLevel: 1,
-  releaseMs: 0,
+  releaseMs: 1,
   disconnectDelayMs: 5,
-  frequency1: 1046.502,
-  frequencyStep1: 0,
+  frequency1: 1025.3,
+  frequencyStep1: 20.6,
   volume1: 0.2,
-  frequency2: 1318.51,
-  frequencyStep2: 0,
-  volume2: 0.2,
-  pitchStepIntervalMs: 0,
-  waveform: "sawtooth",
+  frequency2: 1286.7,
+  frequencyStep2: 30.6,
+  volume2: 0.195,
+  pitchStepIntervalMs: 16.5,
+  waveform: "pulse",
   pulseDutyCycle: 0.25,
   highpassEnabled: true,
-  highpassFrequency: 400,
-  highpassQ: 0.7,
+  highpassFrequency: 200,
+  highpassQ: 4.2,
   lowpassEnabled: false,
   lowpassFrequency: 12000,
   lowpassQ: 0.7,
   eqLowType: "lowshelf",
-  eqLowFrequency: 500,
+  eqLowFrequency: 1000,
   eqLowGain: 0,
   eqLowQ: 0.7,
   eqMidType: "peaking",
-  eqMidFrequency: 2000,
+  eqMidFrequency: 3000,
   eqMidGain: 0,
   eqMidQ: 1,
   eqHighType: "highshelf",
-  eqHighFrequency: 6000,
-  eqHighGain: 0,
+  eqHighFrequency: 6300,
+  eqHighGain: -2,
   eqHighQ: 0.7,
 });
 const ANALYZED_RECOVERY_PROFILE = Object.freeze({
