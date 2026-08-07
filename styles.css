@@ -149,6 +149,12 @@ body:not(.debug-open) .usage-widget {
   min-height: 450px;
 }
 
+body:not(.debug-open) .energy-can-area,
+body:not(.debug-open) .reset-counter,
+body:not(.debug-open) .demo-label {
+  transform: translateY(12px);
+}
+
 body.debug-open .usage-widget {
   width: 100%;
   min-width: 0;
