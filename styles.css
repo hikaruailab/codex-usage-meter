@@ -346,8 +346,11 @@ body.debug-open .usage-widget {
 
 .reset-expiry-tooltip {
   position: absolute;
+  top: auto;
   left: 60px;
   bottom: 0;
+  height: auto;
+  max-height: none;
   z-index: 4;
   min-width: 177px;
   padding: 6px;
@@ -361,6 +364,7 @@ body.debug-open .usage-widget {
   opacity: 0;
   visibility: hidden;
   transform: translateX(-3px);
+  transform-origin: left bottom;
   transition: opacity 80ms linear, transform 80ms linear, visibility 80ms linear;
   pointer-events: none;
   white-space: nowrap;
