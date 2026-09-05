@@ -128,6 +128,9 @@ const DEFAULT_RECORDING_STATE = Object.freeze({
   remaining: 0,
   design: "classic",
   resetCredits: 0,
+  resetCreditExpirations: [],
+  visualCreditUse: false,
+  showStockPanel: false,
 });
 
 function readRecordingState() {
@@ -146,6 +149,16 @@ function readRecordingState() {
       resetCredits: Number.isFinite(parsed.resetCredits)
         ? Math.max(0, Math.trunc(parsed.resetCredits))
         : 0,
+      resetCreditExpirations: Array.isArray(parsed.resetCreditExpirations)
+        ? parsed.resetCreditExpirations
+          .map((value) => {
+            if (value === null) return null;
+            const timestamp = typeof value === "string" ? Date.parse(value) : Number.NaN;
+            return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+          })
+        : [],
+      visualCreditUse: parsed.visualCreditUse === true,
+      showStockPanel: parsed.showStockPanel === true,
     };
   } catch {
     return { ...DEFAULT_RECORDING_STATE };
@@ -277,7 +290,7 @@ class CdpClient {
   }
 }
 
-function setupVideoScreen(recoveryStart, recoveryEnd, animationEnd) {
+function setupVideoScreen(recoveryStart, recoveryEnd, animationEnd, showStockPanel) {
   document.title = "Codex Usage Meter - Actual Use Demo";
 
   const style = document.createElement("style");
@@ -327,14 +340,37 @@ function setupVideoScreen(recoveryStart, recoveryEnd, animationEnd) {
   const cursor = document.querySelector("#videoCursor");
   const energyCanButton = document.querySelector(".energy-can-button");
   const energyMeter = document.querySelector(".energy-meter");
+  const energyCanArea = document.querySelector(".energy-can-area");
+  const resetCounter = document.querySelector("#resetCounter");
+  const stockPanel = document.querySelector("#resetExpiryTooltip");
   window.__videoUpdate = (time) => {
-    const cursorProgress = smooth((time - 0.12) / 0.70);
-    const cursorX = lerp(470, 268, cursorProgress);
-    const cursorY = lerp(160, 657, cursorProgress);
-    const cursorOpacity = time >= 0.12 && time < 1.48 ? 1 : 0;
+    const stockPanelOpen = showStockPanel && time >= 0.14 && time < 0.68;
+    let cursorX;
+    let cursorY;
+    let cursorOpacity;
+    if (showStockPanel) {
+      const moveToStock = smooth((time - 0.04) / 0.18);
+      const moveToCan = smooth((time - 0.68) / 0.30);
+      cursorX = time < 0.68
+        ? lerp(470, 327, moveToStock)
+        : lerp(327, 268, moveToCan);
+      cursorY = time < 0.68
+        ? lerp(160, 657, moveToStock)
+        : lerp(657, 657, moveToCan);
+      cursorOpacity = time >= 0.04 && time < 1.42 ? 1 : 0;
+    } else {
+      const cursorProgress = smooth((time - 0.12) / 0.70);
+      cursorX = lerp(470, 268, cursorProgress);
+      cursorY = lerp(160, 657, cursorProgress);
+      cursorOpacity = time >= 0.12 && time < 1.48 ? 1 : 0;
+    }
     cursor.style.left = `${cursorX}px`;
     cursor.style.top = `${cursorY}px`;
     cursor.style.opacity = String(cursorOpacity);
+
+    stockPanel.hidden = !stockPanelOpen;
+    energyCanArea.classList.toggle("is-expanded", stockPanelOpen);
+    resetCounter.setAttribute("aria-expanded", String(stockPanelOpen));
 
     // app.jsの回復中クラスをそのまま使い、標準の点滅・上下移動を再現する。
     const isCharging = time >= recoveryStart && time < animationEnd;
@@ -427,11 +463,20 @@ async function captureFrames(client, framesDir) {
           Math.floor(elapsedRecoverySeconds / RECOVERY_INTERVAL_SECONDS) + 1,
         );
       const memoryCount = Math.min(MEMORY_COUNT, START_MEMORY_COUNT + completedSteps);
+      const visualCreditUsed = RECORDING_STATE.visualCreditUse && time >= RECOVERY_START;
       const replayState = {
         ...RECORDING_STATE,
         remaining: Math.round((memoryCount / MEMORY_COUNT) * RECORDING_STATE.total),
-        resetCreditExpirations: [],
-        resetCreditExpirationSource: "unavailable",
+        resetCredits: Math.max(
+          0,
+          RECORDING_STATE.resetCredits - (visualCreditUsed ? 1 : 0),
+        ),
+        resetCreditExpirations: visualCreditUsed
+          ? RECORDING_STATE.resetCreditExpirations.slice(1)
+          : RECORDING_STATE.resetCreditExpirations,
+        resetCreditExpirationSource: RECORDING_STATE.resetCreditExpirations.length > 0
+          ? "config"
+          : "unavailable",
       };
       await client.send("Runtime.evaluate", {
         expression: `window.setUsage(${JSON.stringify(replayState)}); window.__videoUpdate(${time.toFixed(6)})`,
@@ -892,7 +937,7 @@ async function run() {
     }
 
     const setup = await client.send("Runtime.evaluate", {
-      expression: `(${setupVideoScreen.toString()})(${RECOVERY_START}, ${RECOVERY_START + RECOVERY_DURATION_SECONDS}, ${RECOVERY_START + RECOVERY_DURATION_SECONDS + SOUND_INTERVAL_SECONDS + 0.5})`,
+      expression: `(${setupVideoScreen.toString()})(${RECOVERY_START}, ${RECOVERY_START + RECOVERY_DURATION_SECONDS}, ${RECOVERY_START + RECOVERY_DURATION_SECONDS + SOUND_INTERVAL_SECONDS + 0.5}, ${RECORDING_STATE.showStockPanel})`,
       returnByValue: true,
     });
     if (setup.exceptionDetails) {
