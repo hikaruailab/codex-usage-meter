@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0021a7">
     <meta name="color-scheme" content="dark">
     <title>Codex Usage Meter</title>
-    <link rel="stylesheet" href="./styles.css?v=20260807-10">
+    <link rel="stylesheet" href="./styles.css?v=20260906-2">
   </head>
   <body>
     <svg class="color-filter-definitions" aria-hidden="true" focusable="false">
@@ -21,6 +21,11 @@
       </filter>
     </svg>
     <main class="usage-widget" aria-label="AI残り使用量">
+      <button id="settingsButton" class="settings-button" type="button" aria-label="設定を開く" aria-controls="debugPanel" aria-expanded="false">
+        <svg viewBox="0 0 7 7" shape-rendering="crispEdges" aria-hidden="true" focusable="false">
+          <path d="M1 0h1v1H1zM3 0h1v1H3zM5 0h1v1H5zM0 1h7v1H0zM0 2h2v1H0zM5 2h2v1H5zM0 3h1v1H0zM3 3h1v1H3zM6 3h1v1H6zM0 4h2v1H0zM5 4h2v1H5zM0 5h7v1H0zM1 6h1v1H1zM3 6h1v1H3zM5 6h1v1H5z"/>
+        </svg>
+      </button>
       <div class="meter-area">
         <button class="energy-frame" type="button" aria-label="ゲージデザインを選択" aria-haspopup="true" aria-expanded="false">
           <span class="energy-meter" role="meter" aria-label="残り使用量" aria-valuemin="0" aria-valuemax="28" aria-valuenow="28">
@@ -31,13 +36,13 @@
       </div>
       <span id="demoLabel" class="demo-label" aria-label="DEMO" hidden></span>
       <div class="energy-can-area">
-        <button class="energy-can-button" type="button" aria-label="ゲージを回復。Shiftを押しながらクリックで週枠をリセット" aria-describedby="resetExpiryTooltip">
+        <button class="energy-can-button" type="button" aria-label="ゲージを回復。Shiftを押しながらクリックで週枠をリセット">
           <span class="energy-can-stack">
             <img class="energy-can" src="./E_can.png" alt="">
             <img class="energy-can energy-can-alert" src="./E_can.png" alt="">
           </span>
         </button>
-        <div id="resetExpiryTooltip" class="reset-expiry-tooltip" role="tooltip">
+        <div id="resetExpiryTooltip" class="reset-expiry-tooltip" role="region" aria-label="E缶の残量と有効期限" hidden>
           <div id="resetExpiryList" class="reset-expiry-list"></div>
           <div class="reset-expiry-hint" aria-label="Shiftを押しながらクリックで使用">
             <kbd>SHIFT</kbd>
@@ -47,13 +52,13 @@
           </div>
         </div>
       </div>
-      <span id="resetCounter" class="reset-counter" aria-label="残り使用量リセット回数 0回"></span>
+      <button id="resetCounter" class="reset-counter" type="button" aria-label="E缶の残量と有効期限を表示" aria-controls="resetExpiryTooltip" aria-expanded="false"></button>
     </main>
 
-    <section id="debugPanel" class="debug-panel" aria-label="回復音デバッグ設定" hidden>
+    <section id="debugPanel" class="debug-panel" aria-label="回復音と動作の設定" hidden>
       <header class="debug-header">
-        <h2>DEBUG</h2>
-        <button class="debug-close" type="button" data-debug-action="close" aria-label="デバッグ設定を閉じる">×</button>
+        <h2>設定</h2>
+        <button class="debug-close" type="button" data-debug-action="close" aria-label="設定を閉じる">×</button>
       </header>
 
       <div class="debug-monitor" aria-live="polite">
@@ -62,17 +67,32 @@
       </div>
 
       <details class="debug-section" data-debug-section="test" open>
-        <summary>テスト</summary>
+        <summary>基本設定</summary>
         <div class="debug-section-content">
-          <div class="debug-actions" aria-label="テスト操作">
-            <button type="button" data-debug-action="zero-recovery">0% → 回復</button>
+          <label class="debug-bgm-setting">
+            <input type="checkbox" data-debug-setting="bgmEnabled">
+            <span>
+              <strong>BGM（ベース音）を鳴らす</strong>
+              <small>ON時はBGM開始から1秒後に回復</small>
+            </span>
+          </label>
+          <label class="debug-bgm-setting debug-recording-setting">
+            <input type="checkbox" data-debug-setting="recordingEnabled">
+            <span>
+              <strong>録画する</strong>
+              <small>回復完了から0.5秒後まで音声付きMP4で保存</small>
+            </span>
+          </label>
+          <p id="recordingStatus" class="recording-status" aria-live="polite">録画はOFFです。</p>
+          <div class="debug-actions" aria-label="回復音と動作の確認">
+            <button type="button" data-debug-action="zero-recovery">回復を試す</button>
             <button type="button" data-debug-action="preview">1音試聴</button>
             <button type="button" data-debug-action="continuous-start">連続再生</button>
             <button type="button" data-debug-action="continuous-stop" disabled>停止</button>
-            <button type="button" data-debug-action="match-reference">原音FFT合わせ</button>
+            <button type="button" data-debug-action="match-reference">標準音に戻す</button>
             <button type="button" data-debug-action="sync">実値へ戻す</button>
-            <button type="button" data-debug-action="reset">初期値</button>
-            <button type="button" data-debug-action="set-defaults">デフォルト変更</button>
+            <button type="button" data-debug-action="reset">保存設定に戻す</button>
+            <button type="button" data-debug-action="set-defaults">現在値を標準に設定</button>
           </div>
         </div>
       </details>
@@ -254,7 +274,7 @@
       </details>
 
       <details class="debug-section" data-debug-section="voices">
-        <summary>2音</summary>
+        <summary>回復音</summary>
         <div class="debug-section-content">
         <div class="waveform-setting">
           <span>波形</span>
@@ -307,6 +327,6 @@
       </details>
     </section>
 
-  <script src="./app.js?v=20260807-1"></script>
+    <script src="./app.js?v=20260906-2"></script>
   </body>
 </html>

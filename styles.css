@@ -89,31 +89,9 @@ html {
   overflow: hidden;
 }
 
-html.debug-open {
-  width: 100%;
-  min-width: 0;
-  max-width: none;
-  height: 100%;
-  min-height: 100%;
-  max-height: none;
-  background: #080808;
-  overflow: auto;
-}
-
 body {
   margin: 0;
   background: #0021a7;
-}
-
-body.debug-open {
-  width: 100vw;
-  min-width: 0;
-  max-width: none;
-  height: auto;
-  min-height: 100vh;
-  max-height: none;
-  background: #080808;
-  overflow: auto;
 }
 
 .color-filter-definitions {
@@ -145,17 +123,62 @@ body.debug-open {
   image-rendering: pixelated;
 }
 
-body:not(.debug-open) .usage-widget {
-  min-height: 450px;
+.usage-widget.credits-open {
+  height: calc(450px + var(--credit-panel-extra, 0px));
+  min-height: calc(450px + var(--credit-panel-extra, 0px));
+  max-height: none;
+  align-content: start;
 }
 
-body.debug-open .usage-widget {
-  width: 100%;
-  min-width: 0;
-  max-width: none;
+html.credits-open,
+body.credits-open {
   height: auto;
   max-height: none;
-  min-height: 100vh;
+  overflow-y: auto;
+}
+
+.settings-button {
+  position: absolute;
+  top: calc(50% - 201px);
+  right: 24px;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  width: 33px;
+  height: 33px;
+  padding: 3px;
+  color: #ffffff;
+  background: #080808;
+  border: 3px solid #ffffff;
+  box-shadow: 3px 3px 0 #111111;
+  cursor: pointer;
+}
+
+.settings-button svg {
+  display: block;
+  width: 21px;
+  height: 21px;
+  fill: currentColor;
+}
+
+.settings-button:hover,
+.settings-button:focus-visible {
+  color: #fff9a8;
+  border-color: #fff9a8;
+  outline: none;
+}
+
+.settings-button:active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 #111111;
+}
+
+body.debug-open .settings-button {
+  visibility: hidden;
+}
+
+.usage-widget.credits-open .settings-button {
+  top: 24px;
 }
 
 .usage-widget::before {
@@ -192,8 +215,18 @@ body.debug-open .usage-widget {
   pointer-events: none;
 }
 
+.usage-widget.credits-open::before,
+.usage-widget.credits-open::after {
+  top: 0;
+  transform: none;
+}
+
 .usage-widget > * {
   z-index: 1;
+}
+
+.usage-widget > .settings-button {
+  z-index: 4;
 }
 
 .meter-area {
@@ -293,8 +326,7 @@ body.debug-open .usage-widget {
   height: 48px;
 }
 
-.energy-can-area:hover,
-.energy-can-area:focus-within {
+.energy-can-area.is-expanded {
   z-index: 5;
 }
 
@@ -346,11 +378,8 @@ body.debug-open .usage-widget {
 
 .reset-expiry-tooltip {
   position: absolute;
-  top: auto;
-  left: 60px;
-  bottom: 0;
-  height: auto;
-  max-height: none;
+  top: 60px;
+  left: 50%;
   z-index: 4;
   min-width: 177px;
   padding: 6px;
@@ -361,20 +390,12 @@ body.debug-open .usage-widget {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
   line-height: 18px;
-  opacity: 0;
-  visibility: hidden;
-  transform: translateX(-3px);
-  transform-origin: left bottom;
-  transition: opacity 80ms linear, transform 80ms linear, visibility 80ms linear;
-  pointer-events: none;
+  transform: translateX(-50%);
   white-space: nowrap;
 }
 
-.energy-can-area:hover .reset-expiry-tooltip,
-.energy-can-area:focus-within .reset-expiry-tooltip {
-  opacity: 1;
-  visibility: visible;
-  transform: translateX(0);
+.reset-expiry-tooltip[hidden] {
+  display: none;
 }
 
 .reset-expiry-list {
@@ -449,6 +470,17 @@ body.debug-open .usage-widget {
   height: 21px;
   margin-top: 12px;
   margin-left: -6px;
+  padding: 0;
+  color: #ffffff;
+  background: transparent;
+  border: 0;
+  appearance: none;
+  cursor: pointer;
+}
+
+.reset-counter:focus-visible {
+  outline: 3px solid var(--meter-fill-light);
+  outline-offset: 4px;
 }
 
 .reset-counter .pixel-character:first-child {
@@ -578,7 +610,7 @@ body.debug-open .usage-widget {
 }
 
 .debug-monitor {
-  display: flex;
+  display: none;
   justify-content: space-between;
   gap: 12px;
   min-height: 30px;
@@ -623,6 +655,65 @@ body.debug-open .usage-widget {
 
 .debug-section-content {
   padding: 2px 0 10px;
+}
+
+.debug-bgm-setting {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  min-height: 42px;
+  margin: 2px 0 8px;
+  padding: 7px 8px;
+  color: #d7f9ff;
+  background: #111726;
+  border: 1px solid #4fd8ff;
+  cursor: pointer;
+}
+
+.debug-bgm-setting input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #4fd8ff;
+}
+
+.debug-bgm-setting strong,
+.debug-bgm-setting small {
+  display: block;
+}
+
+.debug-bgm-setting small {
+  margin-top: 3px;
+  color: #aeb8ca;
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.debug-recording-setting {
+  margin-bottom: 4px;
+  border-color: #8ae7ff;
+}
+
+.recording-status {
+  min-height: 14px;
+  margin: 0 4px 8px;
+  color: #aeb8ca;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.recording-status[data-status="recording"] {
+  color: #fff6a4;
+}
+
+.recording-status[data-status="complete"] {
+  color: #79ff9d;
+}
+
+.recording-status[data-status="failed"],
+.recording-status[data-status="busy"] {
+  color: #ff9a9a;
 }
 
 .debug-control {
@@ -842,6 +933,31 @@ body.debug-open .usage-widget {
 
 .eq-handle.is-dragging {
   cursor: grabbing;
+}
+
+html.settings-window,
+html.settings-window body {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  height: auto;
+  min-height: 100%;
+  max-height: none;
+  overflow: auto;
+  background: #080808;
+}
+
+html.settings-window .usage-widget {
+  display: none;
+}
+
+html.settings-window .debug-panel {
+  position: static;
+  width: 100%;
+  max-height: none;
+  min-height: 100vh;
+  border: 0;
+  box-shadow: none;
 }
 
 @media (max-width: 640px) {

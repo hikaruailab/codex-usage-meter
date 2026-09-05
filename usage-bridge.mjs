@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createReadStream, existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, open, readFile, rm, stat } from "node:fs/promises";
 import { createServer } from "node:http";
+import os from "node:os";
 import { extname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
@@ -11,7 +12,14 @@ const HOST = "127.0.0.1";
 const PORT = Number.parseInt(process.env.USAGE_METER_PORT ?? "4317", 10);
 const PROJECT_DIR = fileURLToPath(new URL(".", import.meta.url));
 const REQUEST_TIMEOUT_MS = 10_000;
+const RECORDING_TIMEOUT_MS = 120_000;
+const RECORDING_RETENTION_MS = 60 * 60 * 1000;
 const RESET_CREDIT_EXPIRATIONS_FILE = join(PROJECT_DIR, "reset-credit-expirations.json");
+const RECORDING_SCRIPT_CANDIDATES = [
+  join(PROJECT_DIR, "social_video", "render_actual_use_video.mjs"),
+  join(PROJECT_DIR, "..", "social_video", "render_actual_use_video.mjs"),
+];
+const RECORDING_SCRIPT = RECORDING_SCRIPT_CANDIDATES.find(existsSync) ?? null;
 const BUNDLED_CODEX_COMMAND = "/Applications/ChatGPT.app/Contents/Resources/codex";
 const CODEX_COMMAND = process.env.USAGE_METER_CODEX_COMMAND
   ?? (existsSync(BUNDLED_CODEX_COMMAND) ? BUNDLED_CODEX_COMMAND : "codex");
@@ -39,6 +47,8 @@ let codexProcess = null;
 let initialized = null;
 let nextRequestId = 1;
 const pendingRequests = new Map();
+const recordingJobs = new Map();
+let activeRecordingId = null;
 
 function rejectPending(error) {
   for (const { reject, timer } of pendingRequests.values()) {
@@ -307,6 +317,154 @@ function sendJson(response, statusCode, body) {
   response.end(`${JSON.stringify(body)}\n`);
 }
 
+function isExpectedOrigin(request) {
+  return !request.headers.origin || request.headers.origin === `http://${HOST}:${PORT}`;
+}
+
+function normalizeRecordingRequest(body) {
+  const total = Number(body.total);
+  const remaining = Number(body.remaining);
+  const resetCredits = Number(body.resetCredits);
+  if (!Number.isFinite(total) || total <= 0 || !Number.isFinite(remaining)) {
+    throw new TypeError("録画する使用量データが不正です。");
+  }
+  return {
+    total: Math.min(Math.max(total, 1), 10_000),
+    remaining: Math.min(Math.max(remaining, 0), total),
+    resetCredits: Number.isFinite(resetCredits)
+      ? Math.min(Math.max(Math.trunc(resetCredits), 0), 100)
+      : 0,
+    design: ["classic", "blue", "red", "green", "purple"].includes(body.design)
+      ? body.design
+      : "classic",
+    bgmEnabled: body.bgmEnabled === true,
+    settings: body.settings && typeof body.settings === "object" && !Array.isArray(body.settings)
+      ? body.settings
+      : {},
+  };
+}
+
+function recordingPublicState(job) {
+  return {
+    id: job.id,
+    status: job.status,
+    fileName: job.fileName,
+    error: job.error,
+    downloadUrl: job.status === "complete" ? `/api/recordings/${job.id}/file` : null,
+  };
+}
+
+async function validateRecordingFile(filePath) {
+  const info = await stat(filePath);
+  if (!info.isFile() || info.size < 10_000) {
+    throw new Error("生成された録画ファイルが不完全です。");
+  }
+  const handle = await open(filePath, "r");
+  try {
+    const signature = Buffer.alloc(12);
+    await handle.read(signature, 0, signature.length, 0);
+    if (signature.toString("ascii", 4, 8) !== "ftyp") {
+      throw new Error("生成された録画ファイルはMP4形式ではありません。");
+    }
+  } finally {
+    await handle.close();
+  }
+}
+
+async function removeRecordingJob(id) {
+  const job = recordingJobs.get(id);
+  if (!job) return;
+  recordingJobs.delete(id);
+  if (activeRecordingId === id) activeRecordingId = null;
+  await rm(job.tempRoot, { recursive: true, force: true }).catch(() => {});
+}
+
+async function createRecordingJob(options) {
+  if (!RECORDING_SCRIPT) throw new Error("録画用レンダラーが見つかりません。");
+  if (activeRecordingId) {
+    const active = recordingJobs.get(activeRecordingId);
+    if (active?.status === "recording") {
+      const error = new Error("別の録画を処理中です。");
+      error.code = "RECORDING_BUSY";
+      throw error;
+    }
+    activeRecordingId = null;
+  }
+
+  const id = randomUUID();
+  const tempRoot = await mkdtemp(join(os.tmpdir(), "usage-meter-recording-"));
+  const outputPath = join(tempRoot, "recording.mp4");
+  const timestamp = new Date().toLocaleString("sv-SE").replace(/\D/g, "").slice(0, 14);
+  const job = {
+    id,
+    status: "recording",
+    fileName: `usage-meter-${timestamp}.mp4`,
+    outputPath,
+    tempRoot,
+    error: null,
+    child: null,
+    timeout: null,
+  };
+  recordingJobs.set(id, job);
+  activeRecordingId = id;
+
+  const child = spawn(process.execPath, [RECORDING_SCRIPT], {
+    cwd: PROJECT_DIR,
+    env: {
+      ...process.env,
+      USAGE_METER_SAFE_RECORDING: "1",
+      USAGE_METER_CONSUME_CREDIT: "0",
+      USAGE_METER_REPLAY: "1",
+      USAGE_METER_INCLUDE_BGM: options.bgmEnabled ? "1" : "0",
+      USAGE_METER_OUTPUT_VIDEO: outputPath,
+      USAGE_METER_OUTPUT_PREVIEW: "",
+      USAGE_METER_SOURCE_URL: `http://${HOST}:${PORT}/?demo=1&recording=1`,
+      USAGE_METER_RECORDING_STATE: JSON.stringify(options),
+      USAGE_METER_RECORDING_SETTINGS: JSON.stringify(options.settings),
+    },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  job.child = child;
+  let errorOutput = "";
+  child.stderr.on("data", (chunk) => {
+    errorOutput = `${errorOutput}${chunk}`.slice(-8_000);
+  });
+  job.timeout = setTimeout(() => {
+    job.error = "録画処理がタイムアウトしました。";
+    child.kill("SIGTERM");
+  }, RECORDING_TIMEOUT_MS);
+  child.once("error", (error) => { job.error = error.message; });
+  child.once("exit", async (code) => {
+    clearTimeout(job.timeout);
+    job.timeout = null;
+    job.child = null;
+    try {
+      if (code !== 0) {
+        throw new Error(job.error || errorOutput.trim() || `録画処理が終了しました（${code}）。`);
+      }
+      await validateRecordingFile(outputPath);
+      job.status = "complete";
+    } catch (error) {
+      job.status = "failed";
+      job.error = error.message;
+    } finally {
+      if (activeRecordingId === id) activeRecordingId = null;
+      const cleanupTimer = setTimeout(() => removeRecordingJob(id), RECORDING_RETENTION_MS);
+      cleanupTimer.unref();
+    }
+  });
+  return job;
+}
+
+function sendRecordingFile(response, job) {
+  response.writeHead(200, {
+    "Cache-Control": "no-store",
+    "Content-Disposition": `attachment; filename="${job.fileName}"`,
+    "Content-Type": "video/mp4",
+  });
+  createReadStream(job.outputPath).on("error", () => response.destroy()).pipe(response);
+}
+
 function serveStaticFile(response, pathname) {
   const fileName = STATIC_FILES.get(pathname);
   if (!fileName) {
@@ -337,8 +495,7 @@ const server = createServer(async (request, response) => {
   }
 
   if (pathname === "/api/usage/reset" && request.method === "POST") {
-    const expectedOrigin = `http://${HOST}:${PORT}`;
-    if (request.headers.origin && request.headers.origin !== expectedOrigin) {
+    if (!isExpectedOrigin(request)) {
       sendJson(response, 403, { error: "別のページからのリセット操作はできません。" });
       return;
     }
@@ -360,8 +517,59 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  if (pathname === "/api/recordings" && request.method === "POST") {
+    if (!isExpectedOrigin(request)) {
+      sendJson(response, 403, { error: "別のページから録画を開始できません。" });
+      return;
+    }
+    try {
+      const job = await createRecordingJob(normalizeRecordingRequest(await readJsonBody(request)));
+      sendJson(response, 202, recordingPublicState(job));
+    } catch (error) {
+      sendJson(response, error.code === "RECORDING_BUSY" ? 409 : 503, { error: error.message });
+    }
+    return;
+  }
+
+  const recordingMatch = pathname.match(/^\/api\/recordings\/([0-9a-f-]+)(?:\/(file))?$/);
+  if (recordingMatch && request.method === "GET") {
+    const job = recordingJobs.get(recordingMatch[1]);
+    if (!job) {
+      sendJson(response, 404, { error: "録画データが見つかりません。" });
+      return;
+    }
+    if (recordingMatch[2] === "file") {
+      if (job.status !== "complete") {
+        sendJson(response, 409, { error: "録画ファイルはまだ完成していません。" });
+        return;
+      }
+      sendRecordingFile(response, job);
+      return;
+    }
+    sendJson(response, 200, recordingPublicState(job));
+    return;
+  }
+
+  if (recordingMatch && request.method === "DELETE") {
+    if (!isExpectedOrigin(request)) {
+      sendJson(response, 403, { error: "別のページから録画を停止できません。" });
+      return;
+    }
+    const job = recordingJobs.get(recordingMatch[1]);
+    if (!job) {
+      sendJson(response, 404, { error: "録画データが見つかりません。" });
+      return;
+    }
+    job.child?.kill("SIGTERM");
+    job.status = "cancelled";
+    job.error = "録画を停止しました。";
+    await removeRecordingJob(job.id);
+    sendJson(response, 200, { id: job.id, status: "cancelled" });
+    return;
+  }
+
   if (request.method !== "GET") {
-    response.writeHead(405, { Allow: "GET, POST" }).end();
+    response.writeHead(405, { Allow: "GET, POST, DELETE" }).end();
     return;
   }
 
@@ -375,6 +583,11 @@ server.listen(PORT, HOST, () => {
 function shutdown() {
   server.close();
   codexProcess?.kill();
+  for (const job of recordingJobs.values()) {
+    job.child?.kill("SIGTERM");
+    clearTimeout(job.timeout);
+    rm(job.tempRoot, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 process.on("SIGINT", shutdown);

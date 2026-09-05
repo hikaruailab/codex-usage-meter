@@ -6,6 +6,18 @@ import { join } from "node:path";
 const url = process.argv[2];
 const windowSize = process.env.USAGE_METER_WINDOW_SIZE ?? "360,482";
 
+function withStandaloneMode(value) {
+  try {
+    const parsed = new URL(value);
+    parsed.searchParams.set("standalone", "1");
+    return parsed.toString();
+  } catch {
+    return value;
+  }
+}
+
+const appUrl = withStandaloneMode(url);
+
 if (!url) {
   console.error("起動するURLが指定されていません。");
   process.exit(1);
@@ -66,7 +78,7 @@ function getProfileDirectory() {
 }
 
 const appArguments = [
-  `--app=${url}`,
+  `--app=${appUrl}`,
   `--window-size=${windowSize}`,
   "--new-window",
   "--no-first-run",

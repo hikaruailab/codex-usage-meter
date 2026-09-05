@@ -1,6 +1,9 @@
+const PAGE_PARAMS = new URLSearchParams(location.search);
 const DEMO_MODE = document.body?.dataset.live === "false"
-  || new URLSearchParams(location.search).get("demo") === "1";
+  || PAGE_PARAMS.get("demo") === "1";
 const LIVE_MODE = !DEMO_MODE;
+const STANDALONE_WINDOW = PAGE_PARAMS.get("standalone") === "1";
+const SETTINGS_WINDOW = PAGE_PARAMS.get("settings") === "1";
 const STORAGE_KEY = LIVE_MODE ? "aiUsageMeter" : "aiUsageMeter.demo";
 const DEBUG_STORAGE_KEY = LIVE_MODE
   ? "aiUsageMeterDebug.standard-v2"
@@ -43,6 +46,8 @@ const EQ_HANDLE_SETTINGS = Object.freeze({
 });
 const EQ_COMPONENT_NAMES = ["highpass", "lowpass", ...Object.keys(EQ_HANDLE_SETTINGS)];
 const DEFAULT_DEBUG_SETTINGS = Object.freeze({
+  bgmEnabled: false,
+  recordingEnabled: false,
   noteDurationMs: 50,
   recoveryIntervalMs: 66.5,
   soundIntervalMs: 66.5,
@@ -167,6 +172,12 @@ const USAGE_ENDPOINT = LIVE_MODE
 const USAGE_RESET_ENDPOINT = LIVE_MODE
   ? (location.protocol === "file:" ? "http://127.0.0.1:4317/api/usage/reset" : "/api/usage/reset")
   : null;
+const RECORDING_ENDPOINT = location.protocol === "file:"
+  ? "http://127.0.0.1:4317/api/recordings"
+  : "/api/recordings";
+const RECORDING_STATUS_STORAGE_KEY = LIVE_MODE
+  ? "aiUsageMeterRecordingStatus"
+  : "aiUsageMeter.demoRecordingStatus";
 const USAGE_REFRESH_INTERVAL_MS = 15_000;
 const RESET_CREDIT_URGENT_MS = 12 * 60 * 60 * 1000;
 const DESIGNS = {
@@ -178,6 +189,8 @@ const DESIGNS = {
 };
 
 const elements = {
+  usageWidget: document.querySelector(".usage-widget"),
+  settingsButton: document.querySelector("#settingsButton"),
   energyFrame: document.querySelector(".energy-frame"),
   energyMeter: document.querySelector(".energy-meter"),
   energyCells: document.querySelector("#energyCells"),
@@ -186,10 +199,12 @@ const elements = {
   energyCanButton: document.querySelector(".energy-can-button"),
   demoLabel: document.querySelector("#demoLabel"),
   resetCounter: document.querySelector("#resetCounter"),
+  resetExpiryPanel: document.querySelector("#resetExpiryTooltip"),
   resetExpiryList: document.querySelector("#resetExpiryList"),
   debugPanel: document.querySelector("#debugPanel"),
   debugMemoryStatus: document.querySelector("#debugMemoryStatus"),
   debugSoundStatus: document.querySelector("#debugSoundStatus"),
+  recordingStatus: document.querySelector("#recordingStatus"),
   eqGraph: document.querySelector("#eqGraph"),
   continuousStartButton: document.querySelector('[data-debug-action="continuous-start"]'),
   continuousStopButton: document.querySelector('[data-debug-action="continuous-stop"]'),
@@ -211,7 +226,22 @@ let eqAnimationFrame = null;
 let defaultFeedbackTimer = null;
 let draggedEqHandle = null;
 let continuousSound = null;
+let bassBgm = null;
+let delayedRecoveryTimer = null;
+let isResetCreditPanelOpen = false;
+let standaloneResizeFrame = null;
+let settingsWindowHandle = null;
+let activeRecordingJobId = null;
 const pulseWaveCache = new WeakMap();
+
+const BASS_BGM_NOTES = Object.freeze([
+  { frequency: 261.8, gain: 0.085 },
+  { frequency: 261.8, gain: 0.085 },
+  { frequency: 261.8, gain: 0.085 },
+  { frequency: 232.0, gain: 0.095 },
+]);
+const BASS_BGM_NOTE_SECONDS = 0.1;
+const BASS_BGM_START_DELAY_MS = 1_000;
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -307,7 +337,7 @@ function loadDebugSettings() {
       ]),
     );
   } catch (error) {
-    console.warn("デバッグ設定を読み込めませんでした。初期値を使います。", error);
+    console.warn("設定を読み込めませんでした。初期値を使います。", error);
     return { ...debugDefaults };
   }
 }
@@ -318,6 +348,24 @@ function saveDebugSettings() {
 
 function saveDebugDefaults() {
   localStorage.setItem(DEBUG_DEFAULTS_STORAGE_KEY, JSON.stringify(debugDefaults));
+}
+
+function applySettingsSnapshot(snapshot, target, fallback) {
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+    return;
+  }
+  Object.keys(DEFAULT_DEBUG_SETTINGS).forEach((name) => {
+    const legacyValue = name === "recoveryIntervalMs" ? snapshot.stepIntervalMs : undefined;
+    target[name] = normalizeDebugSetting(name, snapshot[name] ?? legacyValue, fallback[name]);
+  });
+}
+
+function syncSettingsFromStorage(rawValue, target, fallback) {
+  try {
+    applySettingsSnapshot(JSON.parse(rawValue || "{}"), target, fallback);
+  } catch (error) {
+    console.warn("別ウィンドウの設定を反映できませんでした。", error);
+  }
 }
 
 function saveDebugSectionState() {
@@ -514,8 +562,45 @@ function renderResetCredits() {
   renderResetCreditExpirations();
   elements.energyCanArea.classList.toggle("has-urgent-expiry", hasUrgentCredit);
   const urgentLabel = hasUrgentCredit ? "。12時間以内に期限切れになるE缶があります" : "";
-  elements.resetCounter.setAttribute("aria-label", `残り使用量リセット回数 ${count}回${urgentLabel}`);
+  elements.resetCounter.setAttribute(
+    "aria-label",
+    `E缶 ${count}個${urgentLabel}。押すと残量と有効期限を${isResetCreditPanelOpen ? "閉じます" : "表示します"}`,
+  );
   renderedResetCredits = renderSignature;
+  if (isResetCreditPanelOpen) {
+    resizeStandaloneWindow();
+  }
+}
+
+function resizeStandaloneWindow() {
+  if (standaloneResizeFrame !== null) {
+    window.cancelAnimationFrame(standaloneResizeFrame);
+  }
+  standaloneResizeFrame = window.requestAnimationFrame(() => {
+    standaloneResizeFrame = null;
+    const panelExtra = isResetCreditPanelOpen
+      ? Math.min(elements.resetExpiryPanel.offsetHeight + 24, 250)
+      : 0;
+    elements.usageWidget.style.setProperty("--credit-panel-extra", `${panelExtra}px`);
+    document.documentElement.style.setProperty("--credit-panel-extra", `${panelExtra}px`);
+    if (STANDALONE_WINDOW && typeof window.resizeTo === "function") {
+      const browserFrameHeight = Math.max(0, window.outerHeight - window.innerHeight);
+      window.resizeTo(window.outerWidth, 450 + panelExtra + browserFrameHeight);
+    }
+  });
+}
+
+function toggleResetCreditPanel(forceOpen) {
+  isResetCreditPanelOpen = forceOpen ?? !isResetCreditPanelOpen;
+  elements.resetExpiryPanel.hidden = !isResetCreditPanelOpen;
+  elements.energyCanArea.classList.toggle("is-expanded", isResetCreditPanelOpen);
+  elements.usageWidget.classList.toggle("credits-open", isResetCreditPanelOpen);
+  document.documentElement.classList.toggle("credits-open", isResetCreditPanelOpen);
+  document.body.classList.toggle("credits-open", isResetCreditPanelOpen);
+  elements.resetCounter.setAttribute("aria-expanded", String(isResetCreditPanelOpen));
+  renderedResetCredits = null;
+  renderResetCredits();
+  resizeStandaloneWindow();
 }
 
 function setDemoVisible(isVisible) {
@@ -570,7 +655,7 @@ function consumeUsage(cost) {
   });
 }
 
-function stopRecoveryAnimation() {
+function stopRecoveryAnimation({ keepBassBgm = false } = {}) {
   if (recoveryTimer !== null) {
     window.clearTimeout(recoveryTimer);
     recoveryTimer = null;
@@ -579,6 +664,15 @@ function stopRecoveryAnimation() {
   if (soundTimer !== null) {
     window.clearTimeout(soundTimer);
     soundTimer = null;
+  }
+
+  if (delayedRecoveryTimer !== null) {
+    window.clearTimeout(delayedRecoveryTimer);
+    delayedRecoveryTimer = null;
+  }
+
+  if (!keepBassBgm) {
+    stopBassBgm();
   }
 
   elements.energyCanButton.classList.remove("is-charging");
@@ -595,6 +689,100 @@ function getAudioContext() {
 
   audioContext ??= new AudioContextClass();
   return audioContext;
+}
+
+function scheduleBassBgmWindow(sound) {
+  const { context, oscillator, gain } = sound;
+  const now = context.currentTime;
+  const scheduleUntil = now + 0.25;
+
+  while (sound.nextNoteAt < scheduleUntil) {
+    const startedAt = sound.nextNoteAt;
+    const stoppedAt = startedAt + BASS_BGM_NOTE_SECONDS;
+    const note = BASS_BGM_NOTES[sound.noteIndex % BASS_BGM_NOTES.length];
+    const attackEndsAt = startedAt + 0.008;
+    const releaseStartsAt = stoppedAt - 0.018;
+
+    oscillator.frequency.setValueAtTime(note.frequency, startedAt);
+    gain.gain.setValueAtTime(0.0001, startedAt);
+    gain.gain.linearRampToValueAtTime(note.gain, attackEndsAt);
+    gain.gain.setValueAtTime(note.gain, releaseStartsAt);
+    gain.gain.linearRampToValueAtTime(0.0001, stoppedAt);
+
+    sound.nextNoteAt += BASS_BGM_NOTE_SECONDS;
+    sound.noteIndex += 1;
+  }
+}
+
+function startBassBgm() {
+  if (bassBgm) {
+    return true;
+  }
+
+  const context = getAudioContext();
+  if (!context || context.state === "closed") {
+    return false;
+  }
+  if (context.state === "suspended") {
+    context.resume().catch((error) => {
+      console.warn("BGMを有効にできませんでした。", error);
+    });
+  }
+
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  const startedAt = context.currentTime + 0.01;
+  const sound = {
+    context,
+    oscillator,
+    gain,
+    nextNoteAt: startedAt,
+    noteIndex: 0,
+    timerId: null,
+  };
+
+  oscillator.type = "sine";
+  gain.gain.setValueAtTime(0.0001, context.currentTime);
+  oscillator.connect(gain);
+  gain.connect(context.destination);
+  oscillator.start(startedAt);
+  bassBgm = sound;
+
+  const schedule = () => {
+    if (bassBgm !== sound) {
+      return;
+    }
+    scheduleBassBgmWindow(sound);
+    sound.timerId = window.setTimeout(schedule, 50);
+  };
+  schedule();
+  return true;
+}
+
+function stopBassBgm() {
+  const sound = bassBgm;
+  if (!sound) {
+    return;
+  }
+
+  bassBgm = null;
+  if (sound.timerId !== null) {
+    window.clearTimeout(sound.timerId);
+  }
+
+  const now = sound.context.currentTime;
+  try {
+    sound.gain.gain.cancelScheduledValues(now);
+    sound.gain.gain.setValueAtTime(Math.max(sound.gain.gain.value, 0.0001), now);
+    sound.gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.03);
+    sound.oscillator.stop(now + 0.04);
+  } catch (error) {
+    console.warn("BGMを停止できませんでした。", error);
+  }
+  sound.oscillator.addEventListener("ended", () => {
+    sound.oscillator.disconnect();
+    sound.gain.disconnect();
+  }, { once: true });
 }
 
 function getPulsePeriodicWave(context, dutyCycle) {
@@ -893,8 +1081,114 @@ function startRecovery(options = {}) {
   }
 
   debugSoundCount = 0;
-  animateRecovery();
+  animateRecovery({ keepBassBgm: options.keepBassBgm === true });
   setDemoVisible(options.demo === true);
+}
+
+function startRecoveryWithOptionalBgm(options = {}) {
+  stopRecoveryAnimation();
+
+  if (!debugSettings.bgmEnabled || !startBassBgm()) {
+    startRecovery(options);
+    return;
+  }
+
+  delayedRecoveryTimer = window.setTimeout(() => {
+    delayedRecoveryTimer = null;
+    startRecovery({ ...options, keepBassBgm: true });
+  }, BASS_BGM_START_DELAY_MS);
+}
+
+function setRecordingStatus(message, status = "idle") {
+  const payload = { message, status, updatedAt: Date.now() };
+  localStorage.setItem(RECORDING_STATUS_STORAGE_KEY, JSON.stringify(payload));
+  if (elements.recordingStatus) {
+    elements.recordingStatus.textContent = message;
+    elements.recordingStatus.dataset.status = status;
+  }
+}
+
+function syncRecordingStatus(rawValue) {
+  if (!elements.recordingStatus) return;
+  try {
+    const payload = JSON.parse(rawValue || "{}");
+    if (typeof payload.message === "string") {
+      elements.recordingStatus.textContent = payload.message;
+      elements.recordingStatus.dataset.status = payload.status || "idle";
+    }
+  } catch {
+    // 壊れた一時ステータスは表示せず、録画機能そのものは継続する。
+  }
+}
+
+function downloadRecording(downloadUrl, fileName) {
+  const link = document.createElement("a");
+  link.href = downloadUrl;
+  link.download = fileName || "usage-meter-recording.mp4";
+  link.hidden = true;
+  document.body.append(link);
+  link.click();
+  link.remove();
+}
+
+async function waitForRecording(jobId) {
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => window.setTimeout(resolve, 500));
+    const response = await fetch(`${RECORDING_ENDPOINT}/${jobId}`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(8_000),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error ?? `HTTP ${response.status}`);
+    if (result.status === "complete") {
+      downloadRecording(result.downloadUrl, result.fileName);
+      setRecordingStatus("回復完了後0.5秒までのMP4を保存しました。", "complete");
+      return;
+    }
+    if (["failed", "cancelled"].includes(result.status)) {
+      throw new Error(result.error ?? "録画を完了できませんでした。");
+    }
+  }
+  throw new Error("録画の完了待ちがタイムアウトしました。");
+}
+
+async function recordNextRecovery() {
+  if (activeRecordingJobId) {
+    setRecordingStatus("録画処理中です。完了後にもう一度お試しください。", "busy");
+    return;
+  }
+  setRecordingStatus("回復完了後0.5秒まで録画しています…", "recording");
+  try {
+    const response = await fetch(RECORDING_ENDPOINT, {
+      method: "POST",
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        total: state.total,
+        remaining: state.remaining,
+        resetCredits: state.resetCredits,
+        design: state.design,
+        bgmEnabled: debugSettings.bgmEnabled,
+        settings: debugSettings,
+      }),
+      signal: AbortSignal.timeout(8_000),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error ?? `HTTP ${response.status}`);
+    activeRecordingJobId = result.id;
+    await waitForRecording(result.id);
+  } catch (error) {
+    console.warn("録画を作成できませんでした。", error);
+    setRecordingStatus(`録画できませんでした：${error.message}`, "failed");
+  } finally {
+    activeRecordingJobId = null;
+  }
+}
+
+function startRecoveryWithRecording(options = {}) {
+  if (debugSettings.recordingEnabled) void recordNextRecovery();
+  startRecoveryWithOptionalBgm(options);
 }
 
 function createIdempotencyKey() {
@@ -903,7 +1197,7 @@ function createIdempotencyKey() {
 
 async function useActualResetCredit() {
   if (!LIVE_MODE) {
-    startRecovery({ demo: true });
+    startRecoveryWithRecording({ demo: true });
     return;
   }
 
@@ -970,7 +1264,7 @@ async function useActualResetCredit() {
     );
     saveState();
     render();
-    startRecovery({ demo: false });
+    startRecoveryWithRecording({ demo: false });
   } catch (error) {
     console.warn("週枠の使用量リセットに失敗しました。", error);
     window.alert(`使用量をリセットできませんでした。\n${error.message}`);
@@ -982,8 +1276,8 @@ async function useActualResetCredit() {
   }
 }
 
-function animateRecovery() {
-  stopRecoveryAnimation();
+function animateRecovery({ keepBassBgm = false } = {}) {
+  stopRecoveryAnimation({ keepBassBgm });
   let currentMemoryCount = Math.round((state.remaining / state.total) * MEMORY_COUNT);
 
   if (currentMemoryCount >= MEMORY_COUNT) {
@@ -1479,7 +1773,11 @@ function drawEqGraph(animateResponse = true) {
 function syncDebugControls() {
   elements.debugPanel.querySelectorAll("[data-debug-setting]").forEach((input) => {
     const name = input.dataset.debugSetting;
-    input.value = String(debugSettings[name]);
+    if (input.type === "checkbox") {
+      input.checked = debugSettings[name] === true;
+    } else {
+      input.value = String(debugSettings[name]);
+    }
   });
 
   elements.debugPanel.querySelectorAll("[data-debug-output]").forEach((output) => {
@@ -1498,16 +1796,50 @@ function toggleDebugPanel(forceOpen) {
   elements.debugPanel.hidden = !isOpen;
   document.body.classList.toggle("debug-open", isOpen);
   document.documentElement.classList.toggle("debug-open", isOpen);
+  elements.settingsButton.setAttribute("aria-expanded", String(isOpen));
   if (isOpen) {
+    toggleResetCreditPanel(false);
     toggleDesignPicker(false);
     syncDebugControls();
   }
 }
 
+function openSettingsWindow() {
+  if (SETTINGS_WINDOW) {
+    return;
+  }
+  if (settingsWindowHandle && !settingsWindowHandle.closed) {
+    settingsWindowHandle.focus();
+    return;
+  }
+
+  const settingsUrl = new URL(location.href);
+  settingsUrl.searchParams.set("settings", "1");
+  settingsUrl.searchParams.delete("debug");
+  settingsWindowHandle = window.open(
+    settingsUrl.toString(),
+    "ai-usage-meter-settings",
+    "popup=yes,width=420,height=720,resizable=yes,scrollbars=yes",
+  );
+  if (!settingsWindowHandle) {
+    toggleDebugPanel(true);
+  } else {
+    elements.settingsButton.setAttribute("aria-expanded", "true");
+  }
+}
+
+function closeSettingsWindow() {
+  if (SETTINGS_WINDOW && window.opener && !window.opener.closed) {
+    window.close();
+    return;
+  }
+  toggleDebugPanel(false);
+}
+
 function startRecoveryFromZero() {
   stopRecoveryAnimation();
   setUsage({ total: state.total, remaining: 0 });
-  startRecovery({ demo: true });
+  startRecoveryWithRecording({ demo: true });
 }
 
 function previewRecoverySound() {
@@ -1543,7 +1875,7 @@ function setCurrentDebugSettingsAsDefaults() {
     window.clearTimeout(defaultFeedbackTimer);
   }
   defaultFeedbackTimer = window.setTimeout(() => {
-    button.textContent = "デフォルト変更";
+    button.textContent = "現在値を標準に設定";
     button.disabled = false;
     defaultFeedbackTimer = null;
   }, 900);
@@ -1605,13 +1937,24 @@ elements.energyFrame.addEventListener("click", (event) => {
   toggleDesignPicker();
 });
 
+elements.settingsButton.addEventListener("click", (event) => {
+  event.stopPropagation();
+  openSettingsWindow();
+});
+
+elements.resetCounter.addEventListener("click", (event) => {
+  event.stopPropagation();
+  toggleDesignPicker(false);
+  toggleResetCreditPanel();
+});
+
 elements.energyCanButton.addEventListener("click", (event) => {
   event.stopPropagation();
   toggleDesignPicker(false);
   if (event.shiftKey) {
     useActualResetCredit();
   } else {
-    startRecovery({ demo: true });
+    startRecoveryWithRecording({ demo: true });
   }
 });
 
@@ -1637,7 +1980,8 @@ elements.debugPanel.addEventListener("input", (event) => {
   }
 
   const name = input.dataset.debugSetting;
-  debugSettings[name] = normalizeDebugSetting(name, input.value);
+  const value = input.type === "checkbox" ? input.checked : input.value;
+  debugSettings[name] = normalizeDebugSetting(name, value);
   saveDebugSettings();
   const output = elements.debugPanel.querySelector(`[data-debug-output="${name}"]`);
   if (output) {
@@ -1645,6 +1989,17 @@ elements.debugPanel.addEventListener("input", (event) => {
   }
   if (name.startsWith("eq") || name.startsWith("highpass") || name.startsWith("lowpass")) {
     drawEqGraph();
+  }
+  if (name === "bgmEnabled" && !debugSettings.bgmEnabled) {
+    stopBassBgm();
+  }
+  if (name === "recordingEnabled") {
+    setRecordingStatus(
+      debugSettings.recordingEnabled
+        ? "次の回復を、完了0.5秒後までMP4で保存します。"
+        : "録画はOFFです。",
+      "idle",
+    );
   }
 });
 
@@ -1683,7 +2038,7 @@ elements.debugPanel.addEventListener("click", (event) => {
   }
 
   const actions = {
-    close: () => toggleDebugPanel(false),
+    close: closeSettingsWindow,
     "zero-recovery": startRecoveryFromZero,
     preview: previewRecoverySound,
     "match-reference": applyAnalyzedRecoveryProfile,
@@ -1759,22 +2114,73 @@ document.addEventListener("click", () => {
 });
 
 document.addEventListener("keydown", (event) => {
-  if (event.shiftKey && event.key.toLowerCase() === "d") {
+  if ((event.metaKey || event.ctrlKey) && event.key === ",") {
     event.preventDefault();
-    toggleDebugPanel();
+    openSettingsWindow();
     return;
   }
 
   if (event.key === "Escape") {
     toggleDesignPicker(false);
+    toggleResetCreditPanel(false);
     toggleDebugPanel(false);
   }
 });
 
+window.addEventListener("storage", (event) => {
+  if (event.storageArea !== localStorage) {
+    return;
+  }
+  if (event.key === DEBUG_DEFAULTS_STORAGE_KEY) {
+    syncSettingsFromStorage(event.newValue, debugDefaults, DEFAULT_DEBUG_SETTINGS);
+    return;
+  }
+  if (event.key === RECORDING_STATUS_STORAGE_KEY) {
+    syncRecordingStatus(event.newValue);
+    return;
+  }
+  if (event.key !== DEBUG_STORAGE_KEY) {
+    return;
+  }
+
+  syncSettingsFromStorage(event.newValue, debugSettings, debugDefaults);
+  if (!debugSettings.bgmEnabled) {
+    stopBassBgm();
+  }
+  if (!elements.debugPanel.hidden) {
+    syncDebugControls();
+  }
+});
+
+window.addEventListener("message", (event) => {
+  if (event.origin !== location.origin || event.data?.type !== "ai-usage-meter-settings-closed") {
+    return;
+  }
+  settingsWindowHandle = null;
+  elements.settingsButton.setAttribute("aria-expanded", "false");
+});
+
+if (SETTINGS_WINDOW) {
+  window.addEventListener("beforeunload", () => {
+    if (window.opener && !window.opener.closed) {
+      window.opener.postMessage({ type: "ai-usage-meter-settings-closed" }, location.origin);
+    }
+  });
+}
+
+document.documentElement.classList.toggle("standalone-window", STANDALONE_WINDOW);
+document.documentElement.classList.toggle("settings-window", SETTINGS_WINDOW);
+document.body.classList.toggle("settings-window", SETTINGS_WINDOW);
+if (SETTINGS_WINDOW) {
+  document.title = "AI Usage Meter Settings";
+}
 buildCells();
 buildDesignPicker();
 renderPixelText(elements.demoLabel, "DEMO");
 render();
+syncRecordingStatus(localStorage.getItem(RECORDING_STATUS_STORAGE_KEY));
 initializeDebugSections();
-toggleDebugPanel(new URLSearchParams(location.search).get("debug") === "1");
-startUsageSync();
+toggleDebugPanel(SETTINGS_WINDOW);
+if (!SETTINGS_WINDOW) {
+  startUsageSync();
+}
