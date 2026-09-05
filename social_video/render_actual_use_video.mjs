@@ -129,6 +129,7 @@ const DEFAULT_RECORDING_STATE = Object.freeze({
   design: "classic",
   resetCredits: 0,
   resetCreditExpirations: [],
+  resetCreditDisplayLabels: [],
   visualCreditUse: false,
   showStockPanel: false,
 });
@@ -156,6 +157,11 @@ function readRecordingState() {
             const timestamp = typeof value === "string" ? Date.parse(value) : Number.NaN;
             return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
           })
+        : [],
+      resetCreditDisplayLabels: Array.isArray(parsed.resetCreditDisplayLabels)
+        ? parsed.resetCreditDisplayLabels
+          .filter((value) => typeof value === "string")
+          .map((value) => value.slice(0, 24))
         : [],
       visualCreditUse: parsed.visualCreditUse === true,
       showStockPanel: parsed.showStockPanel === true,
@@ -290,7 +296,13 @@ class CdpClient {
   }
 }
 
-function setupVideoScreen(recoveryStart, recoveryEnd, animationEnd, showStockPanel) {
+function setupVideoScreen(
+  recoveryStart,
+  recoveryEnd,
+  animationEnd,
+  showStockPanel,
+  stockDisplayLabels,
+) {
   document.title = "Codex Usage Meter - Actual Use Demo";
 
   const style = document.createElement("style");
@@ -371,6 +383,13 @@ function setupVideoScreen(recoveryStart, recoveryEnd, animationEnd, showStockPan
     stockPanel.hidden = !stockPanelOpen;
     energyCanArea.classList.toggle("is-expanded", stockPanelOpen);
     resetCounter.setAttribute("aria-expanded", String(stockPanelOpen));
+    if (stockPanelOpen) {
+      stockPanel.querySelectorAll("time").forEach((label, index) => {
+        if (stockDisplayLabels[index]) {
+          label.textContent = stockDisplayLabels[index];
+        }
+      });
+    }
 
     // app.jsの回復中クラスをそのまま使い、標準の点滅・上下移動を再現する。
     const isCharging = time >= recoveryStart && time < animationEnd;
@@ -937,7 +956,7 @@ async function run() {
     }
 
     const setup = await client.send("Runtime.evaluate", {
-      expression: `(${setupVideoScreen.toString()})(${RECOVERY_START}, ${RECOVERY_START + RECOVERY_DURATION_SECONDS}, ${RECOVERY_START + RECOVERY_DURATION_SECONDS + SOUND_INTERVAL_SECONDS + 0.5}, ${RECORDING_STATE.showStockPanel})`,
+      expression: `(${setupVideoScreen.toString()})(${RECOVERY_START}, ${RECOVERY_START + RECOVERY_DURATION_SECONDS}, ${RECOVERY_START + RECOVERY_DURATION_SECONDS + SOUND_INTERVAL_SECONDS + 0.5}, ${RECORDING_STATE.showStockPanel}, ${JSON.stringify(RECORDING_STATE.resetCreditDisplayLabels)})`,
       returnByValue: true,
     });
     if (setup.exceptionDetails) {
