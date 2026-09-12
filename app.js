@@ -8,9 +8,6 @@ const STORAGE_KEY = LIVE_MODE ? "aiUsageMeter" : "aiUsageMeter.demo";
 const DEBUG_STORAGE_KEY = LIVE_MODE
   ? "aiUsageMeterDebug.standard-v2"
   : "aiUsageMeter.demoDebug.standard-v2";
-const DEBUG_DEFAULTS_STORAGE_KEY = LIVE_MODE
-  ? "aiUsageMeterDebugDefaults.standard-v2"
-  : "aiUsageMeter.demoDebugDefaults.standard-v2";
 const DEBUG_SECTIONS_STORAGE_KEY = LIVE_MODE
   ? "aiUsageMeterDebugSections"
   : "aiUsageMeter.demoDebugSections";
@@ -46,7 +43,7 @@ const EQ_HANDLE_SETTINGS = Object.freeze({
 });
 const EQ_COMPONENT_NAMES = ["highpass", "lowpass", ...Object.keys(EQ_HANDLE_SETTINGS)];
 const DEFAULT_DEBUG_SETTINGS = Object.freeze({
-  bgmEnabled: false,
+  bgmEnabled: true,
   recordingEnabled: false,
   noteDurationMs: 50,
   recoveryIntervalMs: 66.5,
@@ -71,40 +68,6 @@ const DEFAULT_DEBUG_SETTINGS = Object.freeze({
   lowpassEnabled: false,
   lowpassFrequency: 12000,
   lowpassQ: 0.7,
-  eqLowType: "lowshelf",
-  eqLowFrequency: 1000,
-  eqLowGain: 0,
-  eqLowQ: 0.7,
-  eqMidType: "peaking",
-  eqMidFrequency: 3000,
-  eqMidGain: 0,
-  eqMidQ: 1,
-  eqHighType: "highshelf",
-  eqHighFrequency: 6300,
-  eqHighGain: -2,
-  eqHighQ: 0.7,
-});
-const ANALYZED_RECOVERY_PROFILE = Object.freeze({
-  noteDurationMs: 50,
-  recoveryIntervalMs: 66.5,
-  soundIntervalMs: 66.5,
-  attackMs: 0,
-  decayMs: 0,
-  sustainLevel: 1,
-  releaseMs: 1,
-  frequency1: 1025.3,
-  frequencyStep1: 20.6,
-  volume1: 0.2,
-  frequency2: 1286.7,
-  frequencyStep2: 30.6,
-  volume2: 0.195,
-  pitchStepIntervalMs: 16.5,
-  waveform: "pulse",
-  pulseDutyCycle: 0.25,
-  highpassEnabled: true,
-  highpassFrequency: 200,
-  highpassQ: 4.2,
-  lowpassEnabled: false,
   eqLowType: "lowshelf",
   eqLowFrequency: 1000,
   eqLowGain: 0,
@@ -180,6 +143,8 @@ const RECORDING_STATUS_STORAGE_KEY = LIVE_MODE
   : "aiUsageMeter.demoRecordingStatus";
 const USAGE_REFRESH_INTERVAL_MS = 15_000;
 const RESET_CREDIT_URGENT_MS = 12 * 60 * 60 * 1000;
+const BASE_WINDOW_WIDTH = 234;
+const BASE_WINDOW_HEIGHT = 450;
 const DESIGNS = {
   classic: ["#fff9a8", "#f4dc35", "#9a6a00"],
   blue: ["#d7f9ff", "#4fd8ff", "#1166c8"],
@@ -211,7 +176,6 @@ const elements = {
 };
 
 const state = loadState();
-const debugDefaults = loadDebugDefaults();
 const debugSettings = loadDebugSettings();
 let recoveryTimer = null;
 let soundTimer = null;
@@ -223,7 +187,6 @@ let renderedResetCredits = null;
 let debugSoundCount = 0;
 let displayedEqResponse = null;
 let eqAnimationFrame = null;
-let defaultFeedbackTimer = null;
 let draggedEqHandle = null;
 let continuousSound = null;
 let bassBgm = null;
@@ -240,8 +203,10 @@ const BASS_BGM_NOTES = Object.freeze([
   { frequency: 261.8, gain: 0.085 },
   { frequency: 232.0, gain: 0.095 },
 ]);
+const BASS_BGM_GAIN_MULTIPLIER = 3.0;
 const BASS_BGM_NOTE_SECONDS = 0.1;
 const BASS_BGM_START_DELAY_MS = 1_000;
+const BASS_BGM_STOP_DELAY_MS = 500;
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
@@ -308,21 +273,6 @@ function normalizeDebugSetting(name, value, fallback = DEFAULT_DEBUG_SETTINGS[na
   return clamp(Number.isFinite(parsed) ? parsed : fallback, min, max);
 }
 
-function loadDebugDefaults() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(DEBUG_DEFAULTS_STORAGE_KEY) || "{}");
-    return Object.fromEntries(
-      Object.keys(DEFAULT_DEBUG_SETTINGS).map((name) => [
-        name,
-        normalizeDebugSetting(name, saved[name], DEFAULT_DEBUG_SETTINGS[name]),
-      ]),
-    );
-  } catch (error) {
-    console.warn("ユーザーデフォルトを読み込めませんでした。出荷時設定を使います。", error);
-    return { ...DEFAULT_DEBUG_SETTINGS };
-  }
-}
-
 function loadDebugSettings() {
   try {
     const saved = JSON.parse(localStorage.getItem(DEBUG_STORAGE_KEY) || "{}");
@@ -332,22 +282,18 @@ function loadDebugSettings() {
         normalizeDebugSetting(
           name,
           saved[name] ?? (name === "recoveryIntervalMs" ? saved.stepIntervalMs : undefined),
-          debugDefaults[name],
+          DEFAULT_DEBUG_SETTINGS[name],
         ),
       ]),
     );
   } catch (error) {
     console.warn("設定を読み込めませんでした。初期値を使います。", error);
-    return { ...debugDefaults };
+    return { ...DEFAULT_DEBUG_SETTINGS };
   }
 }
 
 function saveDebugSettings() {
   localStorage.setItem(DEBUG_STORAGE_KEY, JSON.stringify(debugSettings));
-}
-
-function saveDebugDefaults() {
-  localStorage.setItem(DEBUG_DEFAULTS_STORAGE_KEY, JSON.stringify(debugDefaults));
 }
 
 function applySettingsSnapshot(snapshot, target, fallback) {
@@ -564,7 +510,7 @@ function renderResetCredits() {
   const urgentLabel = hasUrgentCredit ? "。12時間以内に期限切れになるE缶があります" : "";
   elements.resetCounter.setAttribute(
     "aria-label",
-    `E缶 ${count}個${urgentLabel}。押すと残量と有効期限を${isResetCreditPanelOpen ? "閉じます" : "表示します"}`,
+    `E缶 ${count}個${urgentLabel}。E缶にマウスオーバーすると残量と有効期限を${isResetCreditPanelOpen ? "表示中です" : "表示します"}`,
   );
   renderedResetCredits = renderSignature;
   if (isResetCreditPanelOpen) {
@@ -584,8 +530,13 @@ function resizeStandaloneWindow() {
     elements.usageWidget.style.setProperty("--credit-panel-extra", `${panelExtra}px`);
     document.documentElement.style.setProperty("--credit-panel-extra", `${panelExtra}px`);
     if (STANDALONE_WINDOW && typeof window.resizeTo === "function") {
+      const contentWidth = Math.ceil(elements.usageWidget.getBoundingClientRect().width);
+      const browserFrameWidth = Math.max(0, window.outerWidth - window.innerWidth);
       const browserFrameHeight = Math.max(0, window.outerHeight - window.innerHeight);
-      window.resizeTo(window.outerWidth, 450 + panelExtra + browserFrameHeight);
+      window.resizeTo(
+        Math.max(BASE_WINDOW_WIDTH, contentWidth) + browserFrameWidth,
+        BASE_WINDOW_HEIGHT + panelExtra + browserFrameHeight,
+      );
     }
   });
 }
@@ -700,13 +651,14 @@ function scheduleBassBgmWindow(sound) {
     const startedAt = sound.nextNoteAt;
     const stoppedAt = startedAt + BASS_BGM_NOTE_SECONDS;
     const note = BASS_BGM_NOTES[sound.noteIndex % BASS_BGM_NOTES.length];
+    const noteGain = note.gain * BASS_BGM_GAIN_MULTIPLIER;
     const attackEndsAt = startedAt + 0.008;
     const releaseStartsAt = stoppedAt - 0.018;
 
     oscillator.frequency.setValueAtTime(note.frequency, startedAt);
     gain.gain.setValueAtTime(0.0001, startedAt);
-    gain.gain.linearRampToValueAtTime(note.gain, attackEndsAt);
-    gain.gain.setValueAtTime(note.gain, releaseStartsAt);
+    gain.gain.linearRampToValueAtTime(noteGain, attackEndsAt);
+    gain.gain.setValueAtTime(noteGain, releaseStartsAt);
     gain.gain.linearRampToValueAtTime(0.0001, stoppedAt);
 
     sound.nextNoteAt += BASS_BGM_NOTE_SECONDS;
@@ -1143,7 +1095,7 @@ async function waitForRecording(jobId) {
     if (!response.ok) throw new Error(result.error ?? `HTTP ${response.status}`);
     if (result.status === "complete") {
       downloadRecording(result.downloadUrl, result.fileName);
-      setRecordingStatus("回復完了後0.5秒までのMP4を保存しました。", "complete");
+      setRecordingStatus("回復完了後1秒までのMP4を保存しました。", "complete");
       return;
     }
     if (["failed", "cancelled"].includes(result.status)) {
@@ -1158,7 +1110,7 @@ async function recordNextRecovery() {
     setRecordingStatus("録画処理中です。完了後にもう一度お試しください。", "busy");
     return;
   }
-  setRecordingStatus("回復完了後0.5秒まで録画しています…", "recording");
+  setRecordingStatus("回復完了後1秒まで録画しています…", "recording");
   try {
     const response = await fetch(RECORDING_ENDPOINT, {
       method: "POST",
@@ -1168,6 +1120,11 @@ async function recordNextRecovery() {
         total: state.total,
         remaining: state.remaining,
         resetCredits: state.resetCredits,
+        resetCreditExpirations: state.resetCreditExpirations,
+        resetCreditDisplayLabels: state.resetCreditExpirations.map((expiration) => (
+          expiration ? formatResetCreditExpiration(expiration) : "期限情報なし"
+        )),
+        showStockPanel: true,
         design: state.design,
         bgmEnabled: debugSettings.bgmEnabled,
         settings: debugSettings,
@@ -1209,13 +1166,7 @@ async function useActualResetCredit() {
     return;
   }
 
-  const confirmed = window.confirm(
-    `週枠の使用量リセットを1回消費します。\n残り${state.resetCredits}回。実行しますか？`,
-  );
-  if (!confirmed) {
-    return;
-  }
-
+  // Shift＋E缶クリックは確認なしで、ただちに1クレジットを消費する。
   const previousRemaining = state.remaining;
   isActualResetPending = true;
   stopRecoveryAnimation();
@@ -1308,7 +1259,7 @@ function animateRecovery({ keepBassBgm = false } = {}) {
         recoveryTimer = window.setTimeout(() => {
           stopRecoveryAnimation();
           refreshCurrentUsage();
-        }, 500);
+        }, BASS_BGM_STOP_DELAY_MS);
       }, debugSettings.soundIntervalMs);
       return;
     }
@@ -1852,35 +1803,6 @@ function previewRecoverySound() {
   playRecoverySound();
 }
 
-function resetDebugSettings() {
-  Object.assign(debugSettings, debugDefaults);
-  saveDebugSettings();
-  syncDebugControls();
-}
-
-function applyAnalyzedRecoveryProfile() {
-  Object.assign(debugSettings, ANALYZED_RECOVERY_PROFILE);
-  saveDebugSettings();
-  syncDebugControls();
-}
-
-function setCurrentDebugSettingsAsDefaults() {
-  Object.assign(debugDefaults, debugSettings);
-  saveDebugDefaults();
-
-  const button = elements.debugPanel.querySelector('[data-debug-action="set-defaults"]');
-  button.textContent = "保存済み";
-  button.disabled = true;
-  if (defaultFeedbackTimer !== null) {
-    window.clearTimeout(defaultFeedbackTimer);
-  }
-  defaultFeedbackTimer = window.setTimeout(() => {
-    button.textContent = "現在値を標準に設定";
-    button.disabled = false;
-    defaultFeedbackTimer = null;
-  }, 900);
-}
-
 window.kickAiUsage = function kickAiUsage(options = {}) {
   stopRecoveryAnimation();
 
@@ -1942,10 +1864,27 @@ elements.settingsButton.addEventListener("click", (event) => {
   openSettingsWindow();
 });
 
+elements.energyCanArea.addEventListener("mouseenter", () => {
+  if (SETTINGS_WINDOW) {
+    return;
+  }
+  toggleDesignPicker(false);
+  toggleResetCreditPanel(true);
+});
+
+elements.energyCanArea.addEventListener("mouseleave", () => {
+  if (SETTINGS_WINDOW) {
+    return;
+  }
+  toggleResetCreditPanel(false);
+});
+
 elements.resetCounter.addEventListener("click", (event) => {
   event.stopPropagation();
-  toggleDesignPicker(false);
-  toggleResetCreditPanel();
+  if (event.detail === 0) {
+    toggleDesignPicker(false);
+    toggleResetCreditPanel();
+  }
 });
 
 elements.energyCanButton.addEventListener("click", (event) => {
@@ -1996,7 +1935,7 @@ elements.debugPanel.addEventListener("input", (event) => {
   if (name === "recordingEnabled") {
     setRecordingStatus(
       debugSettings.recordingEnabled
-        ? "次の回復を、完了0.5秒後までMP4で保存します。"
+        ? "次の回復を、完了1秒後までMP4で保存します。"
         : "録画はOFFです。",
       "idle",
     );
@@ -2041,13 +1980,6 @@ elements.debugPanel.addEventListener("click", (event) => {
     close: closeSettingsWindow,
     "zero-recovery": startRecoveryFromZero,
     preview: previewRecoverySound,
-    "match-reference": applyAnalyzedRecoveryProfile,
-    sync: () => {
-      stopRecoveryAnimation();
-      refreshCurrentUsage();
-    },
-    reset: resetDebugSettings,
-    "set-defaults": setCurrentDebugSettingsAsDefaults,
   };
   actions[button.dataset.debugAction]?.();
 });
@@ -2131,10 +2063,6 @@ window.addEventListener("storage", (event) => {
   if (event.storageArea !== localStorage) {
     return;
   }
-  if (event.key === DEBUG_DEFAULTS_STORAGE_KEY) {
-    syncSettingsFromStorage(event.newValue, debugDefaults, DEFAULT_DEBUG_SETTINGS);
-    return;
-  }
   if (event.key === RECORDING_STATUS_STORAGE_KEY) {
     syncRecordingStatus(event.newValue);
     return;
@@ -2143,7 +2071,7 @@ window.addEventListener("storage", (event) => {
     return;
   }
 
-  syncSettingsFromStorage(event.newValue, debugSettings, debugDefaults);
+  syncSettingsFromStorage(event.newValue, debugSettings, DEFAULT_DEBUG_SETTINGS);
   if (!debugSettings.bgmEnabled) {
     stopBassBgm();
   }
@@ -2178,6 +2106,7 @@ buildCells();
 buildDesignPicker();
 renderPixelText(elements.demoLabel, "DEMO");
 render();
+resizeStandaloneWindow();
 syncRecordingStatus(localStorage.getItem(RECORDING_STATUS_STORAGE_KEY));
 initializeDebugSections();
 toggleDebugPanel(SETTINGS_WINDOW);

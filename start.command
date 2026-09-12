@@ -58,8 +58,53 @@ fi
 
 cd "$SCRIPT_DIR" || exit 1
 
-PORT="${USAGE_METER_PORT:-4317}"
+START_PORT="${USAGE_METER_PORT:-4317}"
+if ! [[ "$START_PORT" =~ ^[0-9]+$ ]] || [ "$START_PORT" -lt 1 ] || [ "$START_PORT" -gt 65535 ]; then
+  echo "USAGE_METER_PORTは1〜65535の番号で指定してください。4317番から探します。"
+  START_PORT=4317
+fi
+
+find_available_port() {
+  local candidate="$1"
+
+  if command -v lsof >/dev/null 2>&1; then
+    while [ "$candidate" -le 65535 ]; do
+      if ! lsof -nP -iTCP:"$candidate" -sTCP:LISTEN >/dev/null 2>&1; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+      candidate=$((candidate + 1))
+    done
+  else
+    while [ "$candidate" -le 65535 ]; do
+      if node -e '
+        const net = require("node:net");
+        const port = Number(process.argv[1]);
+        const probe = net.createServer();
+        probe.once("error", () => process.exit(1));
+        probe.listen(port, "127.0.0.1", () => probe.close(() => process.exit(0)));
+      ' "$candidate" >/dev/null 2>&1; then
+        printf '%s\n' "$candidate"
+        return 0
+      fi
+      candidate=$((candidate + 1))
+    done
+  fi
+
+  return 1
+}
+
+PORT="$(find_available_port "$START_PORT")" || {
+  echo "使用可能なポートが見つかりませんでした。"
+  read -r -p "Enterキーで終了します。"
+  exit 1
+}
+export USAGE_METER_PORT="$PORT"
 URL="http://127.0.0.1:${PORT}/"
+
+if [ "$PORT" != "$START_PORT" ]; then
+  echo "ポート${START_PORT}は使用中のため、${PORT}を使用します。"
+fi
 
 node usage-bridge.mjs &
 SERVER_PID=$!

@@ -334,6 +334,18 @@ function normalizeRecordingRequest(body) {
     resetCredits: Number.isFinite(resetCredits)
       ? Math.min(Math.max(Math.trunc(resetCredits), 0), 100)
       : 0,
+    resetCreditExpirations: Array.isArray(body.resetCreditExpirations)
+      ? body.resetCreditExpirations
+        .slice(0, 100)
+        .map((value) => value === null || typeof value === "string" ? value : null)
+      : [],
+    resetCreditDisplayLabels: Array.isArray(body.resetCreditDisplayLabels)
+      ? body.resetCreditDisplayLabels
+        .filter((value) => typeof value === "string")
+        .slice(0, 100)
+        .map((value) => value.slice(0, 24))
+      : [],
+    showStockPanel: body.showStockPanel === true,
     design: ["classic", "blue", "red", "green", "purple"].includes(body.design)
       ? body.design
       : "classic",

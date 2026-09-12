@@ -52,6 +52,7 @@ const WIDTH = 540;
 const HEIGHT = 960;
 const FPS = 15;
 const INCLUDE_BGM = process.env.USAGE_METER_INCLUDE_BGM !== "0";
+const BASS_BGM_GAIN_MULTIPLIER = 3.0;
 const RECOVERY_START = INCLUDE_BGM ? 1.05 : 0.85;
 const MEMORY_COUNT = 28;
 // 019f2628-8660-7670-b3ca-70a1f551bb4cで確定した原音合わせ値。
@@ -206,7 +207,14 @@ const RECOVERY_DURATION_SECONDS = Math.max(
   0,
   (RECOVERY_NOTE_COUNT - 1) * RECOVERY_INTERVAL_SECONDS,
 );
-const REQUESTED_END_SECONDS = RECOVERY_START + RECOVERY_DURATION_SECONDS + 0.5;
+// 回復ゲージが満タンになった後も1秒間、画面とBGMを保持する。
+const POST_RECOVERY_HOLD_SECONDS = 1;
+// 完了音後の点滅は通常UIと同じく0.5秒で止め、録画とBGMだけは上の1秒保持まで続ける。
+const POST_COMPLETION_VISUAL_HOLD_SECONDS = 0.5;
+const REQUESTED_END_SECONDS = RECOVERY_START
+  + RECOVERY_DURATION_SECONDS
+  + SOUND_INTERVAL_SECONDS
+  + POST_RECOVERY_HOLD_SECONDS;
 const FRAME_COUNT = Math.max(1, Math.ceil(FPS * REQUESTED_END_SECONDS));
 const DURATION_SECONDS = FRAME_COUNT / FPS;
 const SOURCE_URL = process.env.USAGE_METER_SOURCE_URL ?? "http://127.0.0.1:4317/";
@@ -312,7 +320,7 @@ function setupVideoScreen(
       height: 960px !important;
       min-height: 960px !important;
       overflow: hidden !important;
-      background: #030817 !important;
+      background: #000000 !important;
     }
 
     .usage-widget {
@@ -324,6 +332,20 @@ function setupVideoScreen(
       min-height: 450px !important;
     }
 
+    .usage-widget.credits-open {
+      height: calc(450px + var(--credit-panel-extra, 0px)) !important;
+      min-height: calc(450px + var(--credit-panel-extra, 0px)) !important;
+      max-height: none !important;
+      align-content: start !important;
+    }
+
+    html.credits-open,
+    body.credits-open {
+      height: auto !important;
+      max-height: none !important;
+      overflow: hidden !important;
+    }
+
     #videoCursor {
       position: fixed;
       z-index: 30;
@@ -332,6 +354,11 @@ function setupVideoScreen(
       opacity: 0;
       filter: drop-shadow(2px 3px 0 rgba(0, 0, 0, 0.75));
       pointer-events: none;
+    }
+
+    #videoCursor.is-clicking {
+      transform: translate(2px, 2px) scale(0.9);
+      transform-origin: 2px 2px;
     }
   `;
   document.head.append(style);
@@ -355,40 +382,61 @@ function setupVideoScreen(
   const energyCanArea = document.querySelector(".energy-can-area");
   const resetCounter = document.querySelector("#resetCounter");
   const stockPanel = document.querySelector("#resetExpiryTooltip");
-  window.__videoUpdate = (time) => {
-    const stockPanelOpen = showStockPanel && time >= 0.14 && time < 0.68;
-    let cursorX;
-    let cursorY;
-    let cursorOpacity;
-    if (showStockPanel) {
-      const moveToStock = smooth((time - 0.04) / 0.18);
-      const moveToCan = smooth((time - 0.68) / 0.30);
-      cursorX = time < 0.68
-        ? lerp(470, 327, moveToStock)
-        : lerp(327, 268, moveToCan);
-      cursorY = time < 0.68
-        ? lerp(160, 657, moveToStock)
-        : lerp(657, 657, moveToCan);
-      cursorOpacity = time >= 0.04 && time < 1.42 ? 1 : 0;
-    } else {
-      const cursorProgress = smooth((time - 0.12) / 0.70);
-      cursorX = lerp(470, 268, cursorProgress);
-      cursorY = lerp(160, 657, cursorProgress);
-      cursorOpacity = time >= 0.12 && time < 1.48 ? 1 : 0;
+  const usageWidget = document.querySelector(".usage-widget");
+  const html = document.documentElement;
+  const body = document.body;
+  const CAN_X = 268;
+  const CAN_Y = 657;
+  const HOVER_START_SECONDS = 0.40;
+  const HOVER_END_SECONDS = HOVER_START_SECONDS + 1.00;
+  const CLICK_SECONDS = 0.78;
+
+  // 収録中の仮想クリックがアプリの回復処理を再入発火しないようにする。
+  window.__videoSuppressInput = true;
+  energyCanButton?.addEventListener("click", (event) => {
+    if (window.__videoSuppressInput) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
     }
+  }, true);
+
+  window.__videoUpdate = (time) => {
+    const pointerOnCan = time >= HOVER_START_SECONDS && time < HOVER_END_SECONDS;
+    const moveToCan = smooth((time - 0.05) / (HOVER_START_SECONDS - 0.05));
+    const moveAway = smooth((time - HOVER_END_SECONDS) / 0.28);
+    const cursorX = pointerOnCan
+      ? CAN_X
+      : time < HOVER_START_SECONDS
+        ? lerp(470, CAN_X, moveToCan)
+        : lerp(CAN_X, 30, moveAway);
+    const cursorY = pointerOnCan
+      ? CAN_Y
+      : time < HOVER_START_SECONDS
+        ? lerp(160, CAN_Y, moveToCan)
+        : lerp(CAN_Y, 100, moveAway);
+    const cursorOpacity = time >= 0.05 && time < HOVER_END_SECONDS + 0.35 ? 1 : 0;
     cursor.style.left = `${cursorX}px`;
     cursor.style.top = `${cursorY}px`;
     cursor.style.opacity = String(cursorOpacity);
+    cursor.classList.toggle("is-clicking", time >= CLICK_SECONDS && time < CLICK_SECONDS + 0.12);
 
+    const stockPanelOpen = showStockPanel && pointerOnCan;
     stockPanel.hidden = !stockPanelOpen;
     energyCanArea.classList.toggle("is-expanded", stockPanelOpen);
+    usageWidget?.classList.toggle("credits-open", stockPanelOpen);
+    html.classList.toggle("credits-open", stockPanelOpen);
+    body.classList.toggle("credits-open", stockPanelOpen);
     resetCounter.setAttribute("aria-expanded", String(stockPanelOpen));
     if (stockPanelOpen) {
+      const panelExtra = Math.min(stockPanel.offsetHeight + 24, 250);
+      usageWidget?.style.setProperty("--credit-panel-extra", `${panelExtra}px`);
       stockPanel.querySelectorAll("time").forEach((label, index) => {
         if (stockDisplayLabels[index]) {
           label.textContent = stockDisplayLabels[index];
         }
       });
+    } else {
+      usageWidget?.style.setProperty("--credit-panel-extra", "0px");
     }
 
     // app.jsの回復中クラスをそのまま使い、標準の点滅・上下移動を再現する。
@@ -427,7 +475,13 @@ const RESET_CLICK_SCRIPT = `(() => {
   if (!button) {
     throw new Error("E缶ボタンが見つかりません。");
   }
-  button.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true }));
+  const previousSuppressInput = window.__videoSuppressInput;
+  window.__videoSuppressInput = false;
+  try {
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true }));
+  } finally {
+    window.__videoSuppressInput = previousSuppressInput;
+  }
   return true;
 })()`;
 
@@ -465,6 +519,7 @@ async function startActualReset(client) {
 async function captureFrames(client, framesDir) {
   const startedAt = Date.now();
   let resetReleased = false;
+  let virtualClickSent = false;
 
   for (let index = 0; index < FRAME_COUNT; index += 1) {
     const time = index / FPS;
@@ -508,13 +563,37 @@ async function captureFrames(client, framesDir) {
       });
     }
 
+    const pointerOnCan = time >= 0.40 && time < 1.40;
+    const pointerX = pointerOnCan ? 268 : 30;
+    const pointerY = pointerOnCan ? 657 : 100;
     await client.send("Input.dispatchMouseEvent", {
       type: "mouseMoved",
-      x: time >= 0.70 && time < RECOVERY_START ? 270 : 30,
-      y: time >= 0.70 && time < RECOVERY_START ? 657 : 100,
+      x: pointerX,
+      y: pointerY,
       button: "none",
       buttons: 0,
     });
+
+    // E缶にマウスオーバーした状態で仮想クリックを1回だけ送る。
+    if (!virtualClickSent && time >= 0.78) {
+      await client.send("Input.dispatchMouseEvent", {
+        type: "mousePressed",
+        x: 268,
+        y: 657,
+        button: "left",
+        buttons: 1,
+        clickCount: 1,
+      });
+      await client.send("Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        x: 268,
+        y: 657,
+        button: "left",
+        buttons: 0,
+        clickCount: 1,
+      });
+      virtualClickSent = true;
+    }
 
     if (CONSUME_CREDIT && !resetReleased && time >= RECOVERY_START) {
       const released = await client.send("Runtime.evaluate", {
@@ -571,7 +650,7 @@ function encodeVideo(framesDir, audioPath) {
       inputs.push("-i", bgmPath);
       return [
         "-filter_complex",
-        "[1:a]volume=0.78[sfx];[2:a]volume=0.55[bgm];[sfx][bgm]amix=inputs=2:duration=first:dropout_transition=0[a]",
+        "[1:a]volume=0.78[sfx];[2:a]anull[bgm];[sfx][bgm]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]",
         "-map", "[a]",
       ];
     })()
@@ -856,7 +935,7 @@ function writeAnalyzedBassBgm(outputPath) {
     const fundamental = Math.sin(2 * Math.PI * phase);
     // ユーザー指定どおり、BGMは解析した基音だけにする。
     // 倍音、ノイズ、空気感レイヤー、非線形サチュレーションは加えない。
-    const sample = fundamental * note.gain * envelope * 0.78;
+    const sample = fundamental * note.gain * BASS_BGM_GAIN_MULTIPLIER * envelope;
     const pcm = Math.round(Math.min(Math.max(sample, -1), 1) * 32767);
     const offset = 44 + sampleIndex * channels * bytesPerSample;
     buffer.writeInt16LE(pcm, offset);
@@ -956,7 +1035,7 @@ async function run() {
     }
 
     const setup = await client.send("Runtime.evaluate", {
-      expression: `(${setupVideoScreen.toString()})(${RECOVERY_START}, ${RECOVERY_START + RECOVERY_DURATION_SECONDS}, ${RECOVERY_START + RECOVERY_DURATION_SECONDS + SOUND_INTERVAL_SECONDS + 0.5}, ${RECORDING_STATE.showStockPanel}, ${JSON.stringify(RECORDING_STATE.resetCreditDisplayLabels)})`,
+      expression: `(${setupVideoScreen.toString()})(${RECOVERY_START}, ${RECOVERY_START + RECOVERY_DURATION_SECONDS}, ${RECOVERY_START + RECOVERY_DURATION_SECONDS + SOUND_INTERVAL_SECONDS + POST_COMPLETION_VISUAL_HOLD_SECONDS}, ${RECORDING_STATE.showStockPanel}, ${JSON.stringify(RECORDING_STATE.resetCreditDisplayLabels)})`,
       returnByValue: true,
     });
     if (setup.exceptionDetails) {

@@ -73,9 +73,9 @@ body[data-design="purple"] {
 
 html,
 body {
-  width: 360px;
-  min-width: 360px;
-  max-width: 360px;
+  width: 234px;
+  min-width: 234px;
+  max-width: 234px;
   height: 450px;
   min-height: 450px;
   max-height: 450px;
@@ -144,33 +144,36 @@ body.credits-open {
   z-index: 4;
   display: grid;
   place-items: center;
-  width: 33px;
-  height: 33px;
-  padding: 3px;
+  width: 36px;
+  height: 36px;
+  padding: 6px;
   color: #ffffff;
-  background: #080808;
-  border: 3px solid #ffffff;
-  box-shadow: 3px 3px 0 #111111;
+  background: transparent;
+  border: 0;
+  appearance: none;
   cursor: pointer;
 }
 
 .settings-button svg {
   display: block;
-  width: 21px;
-  height: 21px;
+  width: 24px;
+  height: 24px;
   fill: currentColor;
+  filter: drop-shadow(3px 3px 0 #080808);
 }
 
 .settings-button:hover,
 .settings-button:focus-visible {
   color: #fff9a8;
-  border-color: #fff9a8;
-  outline: none;
+}
+
+.settings-button:focus-visible {
+  outline: 3px solid var(--meter-fill-light);
+  outline-offset: 3px;
 }
 
 .settings-button:active {
-  transform: translate(2px, 2px);
-  box-shadow: 1px 1px 0 #111111;
+  transform: translate(3px, 3px);
 }
 
 body.debug-open .settings-button {
@@ -594,8 +597,16 @@ body.debug-open .settings-button {
   cursor: pointer;
 }
 
-.debug-actions button[data-debug-action="set-defaults"] {
+.debug-settings-note {
   grid-column: 1 / -1;
+}
+
+.debug-settings-note {
+  margin: 2px 0 0;
+  color: #b8dbe8;
+  font-size: 10px;
+  line-height: 1.5;
+  text-align: center;
 }
 
 .debug-actions button:disabled {

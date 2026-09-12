@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#0021a7">
     <meta name="color-scheme" content="dark">
     <title>Codex Usage Meter</title>
-    <link rel="stylesheet" href="./styles.css?v=20260906-2">
+    <link rel="stylesheet" href="./styles.css?v=20260910-2">
   </head>
   <body>
     <svg class="color-filter-definitions" aria-hidden="true" focusable="false">
@@ -22,8 +22,8 @@
     </svg>
     <main class="usage-widget" aria-label="AI残り使用量">
       <button id="settingsButton" class="settings-button" type="button" aria-label="設定を開く" aria-controls="debugPanel" aria-expanded="false">
-        <svg viewBox="0 0 7 7" shape-rendering="crispEdges" aria-hidden="true" focusable="false">
-          <path d="M1 0h1v1H1zM3 0h1v1H3zM5 0h1v1H5zM0 1h7v1H0zM0 2h2v1H0zM5 2h2v1H5zM0 3h1v1H0zM3 3h1v1H3zM6 3h1v1H6zM0 4h2v1H0zM5 4h2v1H5zM0 5h7v1H0zM1 6h1v1H1zM3 6h1v1H3zM5 6h1v1H5z"/>
+        <svg viewBox="0 0 8 8" shape-rendering="crispEdges" aria-hidden="true" focusable="false">
+          <path d="M3 0h2v1H3zM1 1h6v2H1zM0 3h3v2H0zM5 3h3v2H5zM1 5h6v2H1zM3 7h2v1H3z"/>
         </svg>
       </button>
       <div class="meter-area">
@@ -52,7 +52,7 @@
           </div>
         </div>
       </div>
-      <button id="resetCounter" class="reset-counter" type="button" aria-label="E缶の残量と有効期限を表示" aria-controls="resetExpiryTooltip" aria-expanded="false"></button>
+      <button id="resetCounter" class="reset-counter" type="button" aria-label="E缶の残量と有効期限を表示（E缶にマウスオーバー）" aria-controls="resetExpiryTooltip" aria-expanded="false"></button>
     </main>
 
     <section id="debugPanel" class="debug-panel" aria-label="回復音と動作の設定" hidden>
@@ -89,10 +89,7 @@
             <button type="button" data-debug-action="preview">1音試聴</button>
             <button type="button" data-debug-action="continuous-start">連続再生</button>
             <button type="button" data-debug-action="continuous-stop" disabled>停止</button>
-            <button type="button" data-debug-action="match-reference">標準音に戻す</button>
-            <button type="button" data-debug-action="sync">実値へ戻す</button>
-            <button type="button" data-debug-action="reset">保存設定に戻す</button>
-            <button type="button" data-debug-action="set-defaults">現在値を標準に設定</button>
+            <p class="debug-settings-note">デフォルトからの調整内容は自動保存されます。</p>
           </div>
         </div>
       </details>
@@ -327,6 +324,6 @@
       </details>
     </section>
 
-    <script src="./app.js?v=20260906-2"></script>
+    <script src="./app.js?v=20260910-5"></script>
   </body>
 </html>
