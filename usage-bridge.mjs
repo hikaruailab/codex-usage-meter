@@ -10,6 +10,8 @@ import { fileURLToPath } from "node:url";
 
 const HOST = "127.0.0.1";
 const PORT = Number.parseInt(process.env.USAGE_METER_PORT ?? "4317", 10);
+const APP_AUTHORITY = `${HOST}:${PORT}`;
+const APP_ORIGIN = `http://${APP_AUTHORITY}`;
 const PROJECT_DIR = fileURLToPath(new URL(".", import.meta.url));
 const REQUEST_TIMEOUT_MS = 10_000;
 const RECORDING_TIMEOUT_MS = 120_000;
@@ -313,7 +315,6 @@ function readJsonBody(request) {
 
 function sendJson(response, statusCode, body) {
   response.writeHead(statusCode, {
-    "Access-Control-Allow-Origin": "*",
     "Cache-Control": "no-store",
     "Content-Type": "application/json; charset=utf-8",
   });
@@ -321,7 +322,18 @@ function sendJson(response, statusCode, body) {
 }
 
 function isExpectedOrigin(request) {
-  return !request.headers.origin || request.headers.origin === `http://${HOST}:${PORT}`;
+  const { origin, referer, "sec-fetch-site": fetchSite } = request.headers;
+  // An absent Origin is normal for same-origin GETs, but is not proof of trust.
+  if (origin !== undefined && origin !== APP_ORIGIN) return false;
+  if (fetchSite !== undefined && fetchSite !== "same-origin") return false;
+  if (referer !== undefined) {
+    try {
+      if (new URL(referer).origin !== APP_ORIGIN) return false;
+    } catch {
+      return false;
+    }
+  }
+  return origin === APP_ORIGIN || fetchSite === "same-origin" || referer !== undefined;
 }
 
 function normalizeRecordingRequest(body) {
@@ -495,7 +507,34 @@ function serveStaticFile(response, pathname) {
 }
 
 const server = createServer(async (request, response) => {
-  const pathname = new URL(request.url ?? "/", `http://${HOST}:${PORT}`).pathname;
+  response.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+  response.setHeader("X-Content-Type-Options", "nosniff");
+  response.setHeader("Content-Security-Policy", "frame-ancestors 'none'");
+  response.setHeader("X-Frame-Options", "DENY");
+
+  // Reject alternate hosts even if they resolve to loopback (DNS rebinding).
+  if (request.headers.host !== APP_AUTHORITY) {
+    sendJson(response, 403, { error: "起動時に表示されたURLからアクセスしてください。" });
+    return;
+  }
+
+  let target;
+  try {
+    target = new URL(request.url ?? "/", APP_ORIGIN);
+  } catch {
+    sendJson(response, 400, { error: "リクエストURLが不正です。" });
+    return;
+  }
+  if (target.origin !== APP_ORIGIN) {
+    sendJson(response, 403, { error: "別のURLへのリクエストは受け付けません。" });
+    return;
+  }
+  const pathname = target.pathname;
+  // All API routes share this gate, including reads and recording downloads.
+  if ((pathname === "/api" || pathname.startsWith("/api/")) && !isExpectedOrigin(request)) {
+    sendJson(response, 403, { error: "APIは起動した使用量メーターの画面からのみ利用できます。" });
+    return;
+  }
 
   if (pathname === "/api/usage" && request.method === "GET") {
     try {
@@ -507,10 +546,6 @@ const server = createServer(async (request, response) => {
   }
 
   if (pathname === "/api/usage/reset" && request.method === "POST") {
-    if (!isExpectedOrigin(request)) {
-      sendJson(response, 403, { error: "別のページからのリセット操作はできません。" });
-      return;
-    }
     if (request.headers["x-usage-reset-confirm"] !== "consume") {
       sendJson(response, 400, { error: "リセット消費の確認が必要です。" });
       return;
@@ -530,10 +565,6 @@ const server = createServer(async (request, response) => {
   }
 
   if (pathname === "/api/recordings" && request.method === "POST") {
-    if (!isExpectedOrigin(request)) {
-      sendJson(response, 403, { error: "別のページから録画を開始できません。" });
-      return;
-    }
     try {
       const job = await createRecordingJob(normalizeRecordingRequest(await readJsonBody(request)));
       sendJson(response, 202, recordingPublicState(job));
@@ -563,10 +594,6 @@ const server = createServer(async (request, response) => {
   }
 
   if (recordingMatch && request.method === "DELETE") {
-    if (!isExpectedOrigin(request)) {
-      sendJson(response, 403, { error: "別のページから録画を停止できません。" });
-      return;
-    }
     const job = recordingJobs.get(recordingMatch[1]);
     if (!job) {
       sendJson(response, 404, { error: "録画データが見つかりません。" });
