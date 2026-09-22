@@ -1,5 +1,22 @@
 # Codex Usage Meter
 
+## 第三者向け手順
+
+1. [GitHubリポジトリ](https://github.com/hikaruailab/codex-usage-meter)の「Code」から「Download ZIP」を選び、ZIPを展開します。
+2. [Node.js LTS](https://nodejs.org/)をインストールします。追加のnpmパッケージは不要です。
+3. macOSでは展開したフォルダの`start.command`、Windowsでは`start.bat`を実行します。
+4. ブラウザに使用量メーターが開きます。実際のCodex使用量を表示するには、実行する人の環境にCodex CLIまたはChatGPT DesktopのCodex環境が必要です。
+
+macOSでダブルクリックできない場合は、ターミナルで次を実行します。
+
+```bash
+cd ~/Downloads/codex-usage-meter-main
+chmod +x start.command
+./start.command
+```
+
+Codex連携を使わず画面だけ確認する場合は、起動後に`http://127.0.0.1:4317/?demo=1`を開きます。録画機能にはChromeまたはEdgeとffmpegが必要です。
+
 ## 起動
 
 ### macOS
