@@ -14,10 +14,12 @@ const PROJECT_DIR = fileURLToPath(new URL(".", import.meta.url));
 const REQUEST_TIMEOUT_MS = 10_000;
 const RECORDING_TIMEOUT_MS = 120_000;
 const RECORDING_RETENTION_MS = 60 * 60 * 1000;
-const RESET_CREDIT_EXPIRATIONS_FILE = join(PROJECT_DIR, "reset-credit-expirations.json");
+const RESET_CREDIT_EXPIRATIONS_FILES = [
+  join(PROJECT_DIR, "reset-credit-expirations.local.json"),
+  join(PROJECT_DIR, "reset-credit-expirations.json"),
+];
 const RECORDING_SCRIPT_CANDIDATES = [
   join(PROJECT_DIR, "social_video", "render_actual_use_video.mjs"),
-  join(PROJECT_DIR, "..", "social_video", "render_actual_use_video.mjs"),
 ];
 const RECORDING_SCRIPT = RECORDING_SCRIPT_CANDIDATES.find(existsSync) ?? null;
 const BUNDLED_CODEX_COMMAND = "/Applications/ChatGPT.app/Contents/Resources/codex";
@@ -32,9 +34,7 @@ const STATIC_FILES = new Map([
   ["/reset_credit_icon.png", "reset_credit_icon.png"],
   ["/meter_frame.png", "meter_frame.png"],
   ["/meter_cell.png", "meter_cell.png"],
-  ["/frame_block.png", "frame_block.png"],
   ["/widget_frame.png", "widget_frame.png"],
-  ["/usage_meter_design.png", "usage_meter_design.png"],
 ]);
 const CONTENT_TYPES = {
   ".css": "text/css; charset=utf-8",
@@ -206,15 +206,18 @@ function extractApiResetCreditExpirations(summary) {
 }
 
 async function readConfiguredResetCreditExpirations() {
-  try {
-    const payload = JSON.parse(await readFile(RESET_CREDIT_EXPIRATIONS_FILE, "utf8"));
-    return normalizeExpirationList(Array.isArray(payload) ? payload : payload.expirations);
-  } catch (error) {
-    if (error.code !== "ENOENT") {
-      console.warn(`期限設定を読み込めませんでした: ${error.message}`);
+  for (const filePath of RESET_CREDIT_EXPIRATIONS_FILES) {
+    try {
+      const payload = JSON.parse(await readFile(filePath, "utf8"));
+      return normalizeExpirationList(Array.isArray(payload) ? payload : payload.expirations);
+    } catch (error) {
+      if (error.code !== "ENOENT") {
+        console.warn(`期限設定を読み込めませんでした: ${error.message}`);
+        return [];
+      }
     }
-    return [];
   }
+  return [];
 }
 
 async function resolveResetCreditExpirations(summary, availableCount) {
@@ -424,9 +427,6 @@ async function createRecordingJob(options) {
     cwd: PROJECT_DIR,
     env: {
       ...process.env,
-      USAGE_METER_SAFE_RECORDING: "1",
-      USAGE_METER_CONSUME_CREDIT: "0",
-      USAGE_METER_REPLAY: "1",
       USAGE_METER_INCLUDE_BGM: options.bgmEnabled ? "1" : "0",
       USAGE_METER_OUTPUT_VIDEO: outputPath,
       USAGE_METER_OUTPUT_PREVIEW: "",

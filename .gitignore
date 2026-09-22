@@ -1,1 +1,26 @@
 .DS_Store
+Thumbs.db
+
+# Local account configuration and credentials
+reset-credit-expirations.json
+reset-credit-expirations.local.json
+.env
+.env.*
+!.env.example
+auth.json
+*.pem
+*.key
+
+# Generated media, analysis and temporary data
+*.mp4
+*.mov
+*.wav
+*_preview.png
+frame_*.png
+*.log
+analysis/
+recordings/
+chrome-profile/
+BrowserProfile/
+node_modules/
+__pycache__/

@@ -71,3 +71,9 @@ Codexの現在使用量を取得し、残り使用量を自動表示します。
 録画用の実行ファイルを標準パスで検出できない場合は、`USAGE_METER_CHROME_COMMAND`と`USAGE_METER_FFMPEG_COMMAND`で指定できます。
 
 ブリッジは自分のコンピューター内だけで使用してください。
+
+## 個人設定と生成ファイル
+
+期限は通常、利用者自身のCodex環境から取得します。APIが期限を返さない場合は、`reset-credit-expirations.example.json`を`reset-credit-expirations.local.json`へコピーし、`expirations`へISO 8601形式の期限を記入できます。旧ファイル名の`reset-credit-expirations.json`も引き続き読み込みます。両方ある場合は`.local.json`を優先します。
+
+個人設定、認証ファイル、生成動画・音声、ログ、解析データはGitの追跡対象から除外しています。録画には画面に表示する残量・期限が含まれるため、動画を共有する際はその内容を確認してください。

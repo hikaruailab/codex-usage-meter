@@ -3,9 +3,8 @@
 /**
  * 実際のindex.htmlをHeadless Chromeで描画・操作し、縦型デモ動画を生成する。
  *
- * ローカル連携サーバーから実アカウントの使用率を表示し、動画内で
- * Shift+クリックによる週枠リセットクレジットを1回だけ実際に消費する。
- * 実消費はUSAGE_METER_CONSUME_CREDIT=1を明示した場合だけ有効になる。
+ * 渡された表示データで回復演出を再現する。
+ * 録画処理はデモ画面のみを操作し、実クレジットを消費しない。
  */
 
 import { spawn, spawnSync } from "node:child_process";
@@ -17,7 +16,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
-const SAFE_RECORDING = process.env.USAGE_METER_SAFE_RECORDING === "1";
 const OUTPUT_VIDEO = process.env.USAGE_METER_OUTPUT_VIDEO
   ? path.resolve(process.env.USAGE_METER_OUTPUT_VIDEO)
   : path.join(SCRIPT_DIR, "actual_use_demo_youtube_short.mp4");
@@ -55,7 +53,7 @@ const INCLUDE_BGM = process.env.USAGE_METER_INCLUDE_BGM !== "0";
 const BASS_BGM_GAIN_MULTIPLIER = 3.0;
 const RECOVERY_START = INCLUDE_BGM ? 1.05 : 0.85;
 const MEMORY_COUNT = 28;
-// 019f2628-8660-7670-b3ca-70a1f551bb4cで確定した原音合わせ値。
+// 回復音の標準設定。
 const DEFAULT_SOUND_SETTINGS = Object.freeze({
   noteDurationMs: 50,
   recoveryIntervalMs: 66.5,
@@ -217,14 +215,11 @@ const REQUESTED_END_SECONDS = RECOVERY_START
   + POST_RECOVERY_HOLD_SECONDS;
 const FRAME_COUNT = Math.max(1, Math.ceil(FPS * REQUESTED_END_SECONDS));
 const DURATION_SECONDS = FRAME_COUNT / FPS;
-const SOURCE_URL = process.env.USAGE_METER_SOURCE_URL ?? "http://127.0.0.1:4317/";
-// app.jsのE缶ラベルは「E缶 N個。押すと…」形式。残数はここから読み取る。
-const CREDIT_LABEL_PATTERN = /E缶\s*([0-9]+)個/;
-const CREDIT_LABEL_PATTERN_SOURCE = "/E缶\\s*([0-9]+)個/";
-const REPLAY = SAFE_RECORDING || process.env.USAGE_METER_REPLAY === "1";
-// 録画APIから起動された場合は、親プロセスに実消費指定が残っていても無効化する。
-const CONSUME_CREDIT = !SAFE_RECORDING
-  && process.env.USAGE_METER_CONSUME_CREDIT === "1";
+const sourceUrl = new URL(process.env.USAGE_METER_SOURCE_URL ?? "http://127.0.0.1:4317/");
+// 直接起動でも使用量取得・リセットAPIを呼ばないデモ画面を使う。
+sourceUrl.searchParams.set("demo", "1");
+sourceUrl.searchParams.set("recording", "1");
+const SOURCE_URL = sourceUrl.toString();
 
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -450,75 +445,8 @@ function setupVideoScreen(
   window.__videoUpdate(0);
 }
 
-// 実消費の往復待ちを収録前に済ませ、画面反映だけをRECOVERY_STARTへ合わせる。
-const RESET_GATE_SCRIPT = `(() => {
-  window.confirm = () => true;
-  window.alert = (message) => { window.__videoAlert = String(message); };
-  window.__videoResetFetchDone = false;
-  window.__videoResetGateRelease = null;
-  const gate = new Promise((resolve) => { window.__videoResetGateRelease = resolve; });
-  const originalFetch = window.fetch.bind(window);
-  window.fetch = async (input, init) => {
-    const url = String(typeof input === "string" ? input : input?.url ?? "");
-    const response = await originalFetch(input, init);
-    if (url.includes("/api/usage/reset")) {
-      window.__videoResetFetchDone = true;
-      await gate;
-    }
-    return response;
-  };
-  return true;
-})()`;
-
-const RESET_CLICK_SCRIPT = `(() => {
-  const button = document.querySelector(".energy-can-button");
-  if (!button) {
-    throw new Error("E缶ボタンが見つかりません。");
-  }
-  const previousSuppressInput = window.__videoSuppressInput;
-  window.__videoSuppressInput = false;
-  try {
-    button.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true }));
-  } finally {
-    window.__videoSuppressInput = previousSuppressInput;
-  }
-  return true;
-})()`;
-
-async function startActualReset(client) {
-  const gate = await client.send("Runtime.evaluate", {
-    expression: RESET_GATE_SCRIPT,
-    returnByValue: true,
-  });
-  if (gate.exceptionDetails) {
-    throw new Error(`実消費の待機処理を準備できませんでした: ${gate.exceptionDetails.text}`);
-  }
-
-  const click = await client.send("Runtime.evaluate", {
-    expression: RESET_CLICK_SCRIPT,
-    returnByValue: true,
-  });
-  if (click.exceptionDetails) {
-    throw new Error(`実クレジットの操作を開始できませんでした: ${click.exceptionDetails.text}`);
-  }
-
-  // 週枠リセットAPIの往復が終わるまで待ってから収録を始める。
-  for (let attempt = 0; attempt < 300; attempt += 1) {
-    const done = await client.send("Runtime.evaluate", {
-      expression: "window.__videoResetFetchDone === true",
-      returnByValue: true,
-    });
-    if (done.result?.value === true) {
-      return;
-    }
-    await delay(100);
-  }
-  throw new Error("週枠リセットAPIの応答を確認できませんでした。");
-}
-
 async function captureFrames(client, framesDir) {
   const startedAt = Date.now();
-  let resetReleased = false;
   let virtualClickSent = false;
 
   for (let index = 0; index < FRAME_COUNT; index += 1) {
@@ -528,40 +456,33 @@ async function captureFrames(client, framesDir) {
       await delay(waitMilliseconds);
     }
 
-    if (REPLAY) {
-      const elapsedRecoverySeconds = Math.max(0, time - RECOVERY_START);
-      const completedSteps = time < RECOVERY_START || RECOVERY_NOTE_COUNT === 0
-        ? 0
-        : Math.min(
-          RECOVERY_NOTE_COUNT,
-          Math.floor(elapsedRecoverySeconds / RECOVERY_INTERVAL_SECONDS) + 1,
-        );
-      const memoryCount = Math.min(MEMORY_COUNT, START_MEMORY_COUNT + completedSteps);
-      const visualCreditUsed = RECORDING_STATE.visualCreditUse && time >= RECOVERY_START;
-      const replayState = {
-        ...RECORDING_STATE,
-        remaining: Math.round((memoryCount / MEMORY_COUNT) * RECORDING_STATE.total),
-        resetCredits: Math.max(
-          0,
-          RECORDING_STATE.resetCredits - (visualCreditUsed ? 1 : 0),
-        ),
-        resetCreditExpirations: visualCreditUsed
-          ? RECORDING_STATE.resetCreditExpirations.slice(1)
-          : RECORDING_STATE.resetCreditExpirations,
-        resetCreditExpirationSource: RECORDING_STATE.resetCreditExpirations.length > 0
-          ? "config"
-          : "unavailable",
-      };
-      await client.send("Runtime.evaluate", {
-        expression: `window.setUsage(${JSON.stringify(replayState)}); window.__videoUpdate(${time.toFixed(6)})`,
-        returnByValue: true,
-      });
-    } else {
-      await client.send("Runtime.evaluate", {
-        expression: `window.__videoUpdate(${time.toFixed(6)})`,
-        returnByValue: true,
-      });
-    }
+    const elapsedRecoverySeconds = Math.max(0, time - RECOVERY_START);
+    const completedSteps = time < RECOVERY_START || RECOVERY_NOTE_COUNT === 0
+      ? 0
+      : Math.min(
+        RECOVERY_NOTE_COUNT,
+        Math.floor(elapsedRecoverySeconds / RECOVERY_INTERVAL_SECONDS) + 1,
+      );
+    const memoryCount = Math.min(MEMORY_COUNT, START_MEMORY_COUNT + completedSteps);
+    const visualCreditUsed = RECORDING_STATE.visualCreditUse && time >= RECOVERY_START;
+    const replayState = {
+      ...RECORDING_STATE,
+      remaining: Math.round((memoryCount / MEMORY_COUNT) * RECORDING_STATE.total),
+      resetCredits: Math.max(
+        0,
+        RECORDING_STATE.resetCredits - (visualCreditUsed ? 1 : 0),
+      ),
+      resetCreditExpirations: visualCreditUsed
+        ? RECORDING_STATE.resetCreditExpirations.slice(1)
+        : RECORDING_STATE.resetCreditExpirations,
+      resetCreditExpirationSource: RECORDING_STATE.resetCreditExpirations.length > 0
+        ? "config"
+        : "unavailable",
+    };
+    await client.send("Runtime.evaluate", {
+      expression: `window.setUsage(${JSON.stringify(replayState)}); window.__videoUpdate(${time.toFixed(6)})`,
+      returnByValue: true,
+    });
 
     const pointerOnCan = time >= 0.40 && time < 1.40;
     const pointerX = pointerOnCan ? 268 : 30;
@@ -595,17 +516,6 @@ async function captureFrames(client, framesDir) {
       virtualClickSent = true;
     }
 
-    if (CONSUME_CREDIT && !resetReleased && time >= RECOVERY_START) {
-      const released = await client.send("Runtime.evaluate", {
-        expression: "(() => { window.__videoResetGateRelease?.(); return true; })()",
-        returnByValue: true,
-      });
-      if (released.exceptionDetails) {
-        throw new Error(`週枠リセットの画面反映を開始できませんでした: ${released.exceptionDetails.text}`);
-      }
-      resetReleased = true;
-    }
-
     await client.send("Runtime.evaluate", {
       expression: "new Promise(requestAnimationFrame)",
       awaitPromise: true,
@@ -623,17 +533,6 @@ async function captureFrames(client, framesDir) {
     }
   }
   process.stdout.write("\n");
-
-  const finalState = await client.send("Runtime.evaluate", {
-    expression: `(() => ({
-      remaining: Number(document.querySelector(".energy-meter").getAttribute("aria-valuenow")),
-      total: Number(document.querySelector(".energy-meter").getAttribute("aria-valuemax")),
-      creditsLabel: document.querySelector("#resetCounter").getAttribute("aria-label"),
-      alertMessage: window.__videoAlert || ""
-    }))()`,
-    returnByValue: true,
-  });
-  return finalState.result?.value;
 }
 
 function encodeVideo(framesDir, audioPath) {
@@ -891,7 +790,6 @@ async function renderStandardRecoveryAudio(client, outputPath) {
 }
 
 function writeAnalyzedBassBgm(outputPath) {
-  // analysis/bass_cancellation_report.json とbass_note_segments.csvの実測値に基づく
   // C4(約261.8Hz)→B♭3(約232.0Hz)の「C C C B♭」型を反復する。
   const sampleRate = 48_000;
   const channels = 2;
@@ -933,7 +831,7 @@ function writeAnalyzedBassBgm(outputPath) {
     const envelope = attack * release;
     const phase = localTime * note.frequency;
     const fundamental = Math.sin(2 * Math.PI * phase);
-    // ユーザー指定どおり、BGMは解析した基音だけにする。
+    // BGMは基音のみで合成する。
     // 倍音、ノイズ、空気感レイヤー、非線形サチュレーションは加えない。
     const sample = fundamental * note.gain * BASS_BGM_GAIN_MULTIPLIER * envelope;
     const pcm = Math.round(Math.min(Math.max(sample, -1), 1) * 32767);
@@ -976,7 +874,6 @@ async function run() {
   ], { stdio: ["ignore", "ignore", "ignore"] });
 
   let client = null;
-  let consumeWarning = null;
   try {
     const targets = await waitForJson(`http://127.0.0.1:${port}/json/list`);
     const page = targets.find((target) => target.type === "page");
@@ -1009,31 +906,6 @@ async function run() {
       await delay(100);
     }
 
-    let startingCredits = null;
-    for (let attempt = 0; !SAFE_RECORDING && attempt < 150; attempt += 1) {
-      const liveUsage = await client.send("Runtime.evaluate", {
-        expression: `(() => {
-          const meter = document.querySelector(".energy-meter");
-          const label = document.querySelector("#resetCounter")?.getAttribute("aria-label") || "";
-          const matched = label.match(${CREDIT_LABEL_PATTERN_SOURCE});
-          if (Number(meter?.getAttribute("aria-valuemax")) !== 100 || !matched) {
-            return null;
-          }
-          return Number(matched[1]);
-        })()`,
-        returnByValue: true,
-      });
-      const credits = liveUsage.result?.value;
-      if (Number.isFinite(credits) && (!CONSUME_CREDIT || credits > 0)) {
-        startingCredits = credits;
-        break;
-      }
-      if (attempt === 149) {
-        throw new Error("実アカウントの使用量またはリセットクレジットを読み込めませんでした。");
-      }
-      await delay(100);
-    }
-
     const setup = await client.send("Runtime.evaluate", {
       expression: `(${setupVideoScreen.toString()})(${RECOVERY_START}, ${RECOVERY_START + RECOVERY_DURATION_SECONDS}, ${RECOVERY_START + RECOVERY_DURATION_SECONDS + SOUND_INTERVAL_SECONDS + POST_COMPLETION_VISUAL_HOLD_SECONDS}, ${RECORDING_STATE.showStockPanel}, ${JSON.stringify(RECORDING_STATE.resetCreditDisplayLabels)})`,
       returnByValue: true,
@@ -1042,25 +914,7 @@ async function run() {
       throw new Error(`動画用画面の初期化に失敗しました: ${setup.exceptionDetails.text}`);
     }
 
-    if (CONSUME_CREDIT) {
-      await startActualReset(client);
-    }
-
-    const finalState = await captureFrames(client, framesDir);
-    // 実消費後は動画を必ず書き出す。検証は失敗しても中断せず警告として残す。
-    if (CONSUME_CREDIT) {
-      const remainingCredits = Number(
-        CREDIT_LABEL_PATTERN.exec(finalState?.creditsLabel ?? "")?.[1],
-      );
-      const completed = finalState?.remaining === finalState?.total
-        && remainingCredits === startingCredits - 1;
-      if (!completed) {
-        consumeWarning = `週枠リセットの完了を確認できませんでした: ${JSON.stringify({
-          ...finalState,
-          startingCredits,
-        })}`;
-      }
-    }
+    await captureFrames(client, framesDir);
     const previewIndex = Math.min(
       FRAME_COUNT - 1,
       Math.round((RECOVERY_START + RECOVERY_DURATION_SECONDS + 0.45) * FPS),
@@ -1088,9 +942,6 @@ async function run() {
   console.log(`動画: ${OUTPUT_VIDEO}`);
   if (OUTPUT_PREVIEW) {
     console.log(`プレビュー: ${OUTPUT_PREVIEW}`);
-  }
-  if (consumeWarning) {
-    console.warn(`警告: ${consumeWarning}`);
   }
 }
 
